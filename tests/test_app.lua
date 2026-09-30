@@ -208,6 +208,48 @@ test("settings are normalized and validated against the inverter's limits", func
   ok(select(2, Sync.validate(slots, string.rep("3", 96))))
 end)
 
+-- Display --------------------------------------------------------------------
+
+local Display = App.Display
+
+test("every value has a name in all four languages", function()
+  for _, entry in ipairs(Catalog.ALL) do
+    local texts = App.STRINGS["value." .. entry.name]
+    ok(texts, "no name for " .. entry.name)
+    for _, lang in ipairs(I18n.LANGUAGES) do ok(texts[lang], entry.name .. " lacks " .. lang) end
+  end
+end)
+
+test("values are shown with unit, switches as on/off, time control as windows", function()
+  I18n.register(App.STRINGS)
+  I18n.setLanguage("de")
+  eq(Display.format(Catalog.get("pvPower"), 1042), "1042 W")
+  eq(Display.format(Catalog.get("yieldDay"), 27.19), "27.19 kWh")
+  eq(Display.format(Catalog.get("batterySmartControl"), "1"), "ein")
+  eq(Display.format(Catalog.get("inverterState"), "FeedIn"), "FeedIn")
+  eq(Display.format(Catalog.get("pvPower"), nil), "-")
+  local monday = string.rep("0", 47) .. "2" .. string.rep("0", 48)
+  eq(Display.format(Catalog.get("batteryTimeControlMon"), monday), "11:45-12:00 (2)")
+  eq(Display.slots(string.rep("1", 8) .. string.rep("0", 84) .. string.rep("2", 4)), "00:00-02:00 (1), 23:00-24:00 (2)")
+  eq(Display.slots(string.rep("0", 96)), "-")
+end)
+
+test("the value list has one translated line per value and is only written when it changes", function()
+  I18n.register(App.STRINGS)
+  I18n.setLanguage("fr")
+  local qa = FakeQA.new({})
+  local writes = 0
+  local updateView = qa.updateView
+  function qa:updateView(...) writes = writes + 1; return updateView(self, ...) end
+  Display.init(qa, { "pvPower", "batterySoc" })
+  Display.set(Catalog.get("pvPower"), 500)
+  Display.set(Catalog.get("batterySoc"), 80)
+  Display.render()
+  Display.render()
+  eq(qa.views.lblValues.text, "Puissance PV: 500 W<br>Charge batterie: 80 %")
+  eq(writes, 1)
+end)
+
 -- Children ---------------------------------------------------------------------
 
 -- A small model of the controller's device list.

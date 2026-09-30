@@ -1,8 +1,8 @@
--- App: reads the values selected in readValues/childValues, synchronises the
--- settings selected in writeValues, and keeps the status line up to date.
+-- App: reads the values listed in readValues and childValues, synchronises
+-- the settings listed in writeValues, and keeps the user interface up to date.
 --
 -- All project code lives in the global App table (App.Catalog, App.Kostal,
--- App.Sync, App.Vars, App.Children, App.Store, App.Crypto).
+-- App.Sync, App.Vars, App.Children, App.Display, App.Store, App.Crypto).
 
 App = {}
 
@@ -12,43 +12,46 @@ local LIST_LENGTH = 2000
 
 --- Project variables, added to Config.COMMON (logLevel, language).
 App.CONFIG = {
-  { name = "host", type = "host", required = true },
-  { name = "password", type = "secret", required = true },
+  { name = "host",            type = "host",    required = true },
+  { name = "password",        type = "secret",  required = true },
   { name = "pollIntervalSec", type = "integer", default = 30, min = 10, max = 3600 },
-  { name = "readValues", type = "string", maxLength = LIST_LENGTH,
+  { name = "readValues",      type = "string",  maxLength = LIST_LENGTH,
     default = "pvPower, homePower, gridPower, batteryPower, batterySoc, yieldDay" },
-  { name = "writeValues", type = "string", maxLength = LIST_LENGTH, default = "batteryMinSoc, batterySmartControl" },
-  { name = "childValues", type = "string", maxLength = LIST_LENGTH, default = "none" },
+  { name = "writeValues",     type = "string",  maxLength = LIST_LENGTH,
+    default = "batteryMinSoc, batterySmartControl" },
+  { name = "childValues",     type = "string",  maxLength = LIST_LENGTH,
+    default = "none" },
 }
 
 App.UI = {
-  text = { btnRefresh = "ui.refresh" },
+  text        = { btnRefresh = "ui.refresh" },
   statusLabel = "lblStatus",
 }
 
 local SETTINGS_SYNC_MS = 5 * 60 * 1000
-local MAX_RETRY_MS = 10 * 60 * 1000
+local MAX_RETRY_MS     = 10 * 60 * 1000
+local VERIFY_DELAY_MS  = 2000
+local VERIFY_ATTEMPTS  = 3
+
+local LISTS = {
+  { key = "read",     variable = "readValues",  accept = "readable" },
+  { key = "write",    variable = "writeValues", accept = "writable" },
+  { key = "children", variable = "childValues", accept = "childCapable" },
+}
 
 local state = {}
 
--- Lists ----------------------------------------------------------------------
+-- Lists ------------------------------------------------------------------------
 
-local function isProcess(entry) return entry.kind == "process" end
-
---- Parse the three lists. Returns lists or nil, problems (list of text).
+--- Parse the three lists. Returns lists, or nil and the invalid entries per variable.
 function App.parseLists(cfg)
-  local problems, lists = {}, {}
-  local specs = {
-    { key = "read", variable = "readValues", accept = App.Catalog.readable },
-    { key = "write", variable = "writeValues", accept = App.Catalog.writable },
-    { key = "children", variable = "childValues", accept = App.Catalog.childCapable },
-  }
-  for _, spec in ipairs(specs) do
-    local text = cfg[spec.variable]
-    if text == nil or Util.trim(text):lower() == "none" then text = "" end
-    local names, invalid = App.Catalog.parseList(text, spec.accept)
+  local lists, problems = {}, {}
+  for _, spec in ipairs(LISTS) do
+    local text = cfg[spec.variable] or ""
+    if Util.trim(text):lower() == "none" then text = "" end
+    local names, invalid = App.Catalog.parseList(text, App.Catalog[spec.accept])
     lists[spec.key] = names
-    if #invalid > 0 then problems[#problems + 1] = spec.variable .. ": " .. Util.join(invalid) end
+    if #invalid > 0 then problems[#problems + 1] = { variable = spec.variable, names = invalid } end
   end
   if #problems > 0 then return nil, problems end
   return lists
@@ -63,33 +66,55 @@ local function entriesOf(names, filter)
   return entries
 end
 
--- Start ----------------------------------------------------------------------
+local function isProcess(entry) return entry.kind == "process" end
+local function isSetting(entry) return entry.kind ~= "process" end
+
+--- Names shown in the value list: readValues, then writeValues not already shown.
+local function displayNames(lists)
+  local names, seen = {}, {}
+  for _, list in ipairs({ lists.read, lists.write }) do
+    for _, name in ipairs(list) do
+      if not seen[name] then names[#names + 1], seen[name] = name, true end
+    end
+  end
+  return names
+end
+
+-- Start ------------------------------------------------------------------------
 
 --- Called once by Boot.run with a valid configuration.
 function App.start(qa, cfg)
   local lists, problems = App.parseLists(cfg)
   if not lists then
-    for _, problem in ipairs(problems) do
-      Log.error("Unknown or not allowed value names in %s; the README lists all valid names", problem)
+    local variables = {}
+    for i, problem in ipairs(problems) do
+      variables[i] = problem.variable
+      Log.error("%s: unknown or not allowed names: %s (the README lists all valid names)",
+        problem.variable, Util.join(problem.names))
     end
-    Ui.setStatus("lib.status.notConfigured", { names = "readValues / writeValues / childValues" })
+    Ui.setStatus("lib.status.notConfigured", { names = Util.join(variables) })
     return
   end
 
   state = {
-    qa = qa, lists = lists, intervalMs = cfg.pollIntervalSec * 1000, failures = 0, online = nil,
-    readSet = {}, writeSet = {}, available = nil, meta = nil, existingIds = nil,
+    lists      = lists,
+    readSet    = {},
+    writeSet   = {},
+    intervalMs = cfg.pollIntervalSec * 1000,
+    failures   = 0,
   }
   for _, name in ipairs(lists.read) do state.readSet[name] = true end
   for _, name in ipairs(lists.write) do state.writeSet[name] = true end
 
   App.Store.init(qa)
+  App.Sync.init()
   App.Vars.init(qa)
   local keep = {}
   for name in pairs(state.readSet) do keep[name] = true end
   for name in pairs(state.writeSet) do keep[name] = true end
   App.Vars.removeUnlisted(keep)
   App.Children.sync(qa, lists.children)
+  App.Display.init(qa, displayNames(lists))
   Log.info("Reading %s value(s), synchronising %s setting(s), %s child device(s)",
     #lists.read, #lists.write, #lists.children)
 
@@ -98,18 +123,19 @@ function App.start(qa, cfg)
   App.connect()
 end
 
--- Failure handling -------------------------------------------------------------
+-- Failures ---------------------------------------------------------------------
+
+local function stop(err)
+  -- Retrying a rejected password could lock the account; wait for a new configuration.
+  Log.error("%s; stopped until the QuickApp variables are saved again", err)
+  Ui.setStatus("status.authFailed")
+  state.online, state.stopped = false, true
+  Timer.cancelAll()
+end
 
 local function onFailure(err, kind, retry)
+  if kind == "auth" then return stop(err) end
   state.failures = state.failures + 1
-  if kind == "auth" then
-    -- Retrying a rejected password could lock the account; wait for a new configuration.
-    Log.error("%s; stopped until the QuickApp variables are saved again", err)
-    Ui.setStatus("status.authFailed")
-    state.online, state.stopped = false, true
-    Timer.cancelAll()
-    return
-  end
   local delayMs = Timer.backoff(state.failures, state.intervalMs, math.max(state.intervalMs, MAX_RETRY_MS))
   if state.online ~= false then
     Log.warn("Inverter %s; retrying with back-off", err)
@@ -141,6 +167,8 @@ end
 
 -- Process data -----------------------------------------------------------------
 
+-- The query for all process values needed: listed values, children and the
+-- two values of the status line.
 local function processQuery()
   local query, entries, seen = {}, {}, {}
   local function request(module, id)
@@ -153,11 +181,11 @@ local function processQuery()
   local function add(entry)
     if seen[entry.name] then return end
     seen[entry.name] = true
-    local any = false
+    local offered = false
     for _, source in ipairs(entry.sum or { { entry.module, entry.id } }) do
-      any = request(source[1], source[2]) or any
+      offered = request(source[1], source[2]) or offered
     end
-    if any then entries[#entries + 1] = entry end
+    if offered then entries[#entries + 1] = entry end
   end
   for _, entry in ipairs(entriesOf(state.lists.read, isProcess)) do add(entry) end
   for _, entry in ipairs(entriesOf(state.lists.children)) do add(entry) end
@@ -166,11 +194,13 @@ local function processQuery()
   return query, entries
 end
 
+-- A variable in writeValues that differs from its reference was changed on the HC3.
 local function checkLocalChanges()
   local references = App.Sync.references()
   for _, entry in ipairs(entriesOf(state.lists.write)) do
     local localValue = App.Sync.normalize(entry, App.Vars.get(entry.name))
-    if localValue ~= "" and references[entry.name] ~= nil and localValue ~= references[entry.name] then
+    local reference  = references[entry.name]
+    if localValue ~= "" and reference ~= nil and localValue ~= reference then
       Log.debug("Local change of '%s' detected", entry.name)
       return App.syncSettings()
     end
@@ -188,21 +218,28 @@ function App.poll()
     if err then return onFailure(err, kind, App.poll) end
     local values = {}
     for _, entry in ipairs(entries) do
-      values[entry.name] = App.Catalog.present(entry, App.Catalog.raw(entry, processdata))
-      if state.readSet[entry.name] then App.Vars.publish(entry, values[entry.name]) end
+      local value = App.Catalog.present(entry, App.Catalog.raw(entry, processdata))
+      values[entry.name] = value
+      if state.readSet[entry.name] then
+        App.Vars.publish(entry, value)
+        App.Display.set(entry, value)
+      end
     end
     App.Children.update(values, state.existingIds)
+    App.Display.render()
     if state.online ~= true then Log.info("Inverter online") end
     state.online, state.failures = true, 0
     Ui.setStatus("status.online", {
-      pv = values.pvPower or "-", soc = values.batterySoc or "-", time = os.date("%H:%M"),
+      pv   = values.pvPower or "-",
+      soc  = values.batterySoc or "-",
+      time = os.date("%H:%M"),
     })
     checkLocalChanges()
     Timer.after("poll", state.intervalMs, App.poll)
   end)
 end
 
--- Settings -----------------------------------------------------------------------
+-- Settings ---------------------------------------------------------------------
 
 local function settingsQuery(entries)
   local query = {}
@@ -217,7 +254,7 @@ local function remoteValue(remote, entry)
   local module = remote[entry.module] or {}
   if entry.ids then
     local parts = {}
-    for _, id in ipairs(entry.ids) do parts[#parts + 1] = module[id] or "" end
+    for i, id in ipairs(entry.ids) do parts[i] = module[id] or "" end
     return Util.trim(table.concat(parts, " "))
   end
   return module[entry.id]
@@ -227,112 +264,148 @@ local function metaOf(entry)
   return state.meta and state.meta[entry.module] and state.meta[entry.module][entry.id]
 end
 
-local function verifyWrites(pending, references)
+local function showSetting(entry, value)
+  App.Vars.set(entry.name, value)
+  App.Display.set(entry, value)
+end
+
+local function finishSync()
+  App.Display.render()
+  state.syncing = false
+  if state.syncAgain then
+    state.syncAgain = false
+    App.syncSettings()
+  end
+end
+
+-- The inverter applies a written value with a short delay, so the read-back
+-- is repeated a few times before a difference counts as rejected.
+local function verifyWrites(pending, attempt)
   local entries = {}
   for name in pairs(pending) do entries[#entries + 1] = App.Catalog.get(name) end
-  state.client:settings(settingsQuery(entries), function(err, remote)
+  state.client:settings(settingsQuery(entries), function(err, remote, kind)
     if err then
       Log.error("Cannot read back written settings: %s", err)
-    else
-      for name, wanted in pairs(pending) do
-        local entry = App.Catalog.get(name)
-        local actual = App.Sync.normalize(entry, remoteValue(remote, entry))
-        if actual == wanted then
-          Log.info("Setting '%s' changed to %s on the inverter", name, wanted)
-        else
-          Log.error("The inverter kept '%s' at %s instead of %s", name, actual, wanted)
-        end
-        references[name] = actual
-        App.Vars.set(name, actual)
-      end
-      App.Sync.saveReferences(references)
+      if kind == "auth" then stop(err) end
+      return finishSync()
     end
-    state.syncing = false
-    if state.syncAgain then state.syncAgain = false; App.syncSettings() end
+    local references, open = App.Sync.references(), {}
+    for name, wanted in pairs(pending) do
+      local entry  = App.Catalog.get(name)
+      local actual = App.Sync.normalize(entry, remoteValue(remote, entry))
+      if actual == wanted then
+        Log.info("Setting '%s' changed to %s on the inverter", name, wanted)
+        references[name] = actual
+        showSetting(entry, actual)
+      elseif attempt < VERIFY_ATTEMPTS then
+        open[name] = wanted
+      else
+        Log.error("The inverter kept '%s' at %s instead of %s", name, actual, wanted)
+        references[name] = actual
+        showSetting(entry, actual)
+      end
+    end
+    App.Sync.saveReferences(references)
+    if next(open) then
+      return Timer.after("verify", VERIFY_DELAY_MS, function() verifyWrites(open, attempt + 1) end)
+    end
+    finishSync()
   end)
 end
 
---- Three-way synchronisation of the listed settings and refresh of read-only
+-- Compare one listed setting with the inverter. Returns the value to write, if any.
+local function reconcile(entry, remote, references)
+  local name       = entry.name
+  local remoteText = App.Sync.normalize(entry, remoteValue(remote, entry))
+  local localText  = App.Sync.normalize(entry, App.Vars.get(name))
+  local action     = App.Sync.decide(localText, remoteText, references[name])
+
+  if action == "write" then
+    local valid, reason = App.Sync.validate(entry, localText, metaOf(entry))
+    if valid then return valid end
+    Log.warn("Value %s for '%s' rejected: %s; variable reset to the inverter's value %s",
+      localText, name, reason, remoteText)
+    showSetting(entry, remoteText)
+  elseif action == "conflict" then
+    Log.warn("'%s' was changed locally (%s) and on the inverter (%s); the inverter's value applies",
+      name, localText, remoteText)
+    references[name] = remoteText
+    showSetting(entry, remoteText)
+  elseif action == "adopt" then
+    if references[name] ~= nil then
+      Log.info("'%s' was changed on the inverter: %s -> %s", name, references[name], remoteText)
+    end
+    references[name] = remoteText
+    showSetting(entry, remoteText)
+  else
+    App.Display.set(entry, remoteText)
+  end
+  return nil
+end
+
+--- Three-way synchronisation of the listed settings, and refresh of read-only
 -- settings and device information.
 function App.syncSettings()
   if state.stopped or not state.meta then return end
-  if state.syncing then state.syncAgain = true; return end
+  if state.syncing then
+    state.syncAgain = true
+    return
+  end
   state.syncing = true
-  Timer.cancel("settings")
   Timer.after("settings", SETTINGS_SYNC_MS, App.syncSettings)
   state.existingIds = App.Children.existingIds()
 
   local writeEntries = entriesOf(state.lists.write)
-  local readEntries = entriesOf(state.lists.read, function(e) return e.kind ~= "process" end)
+  local readEntries  = entriesOf(state.lists.read, isSetting)
   local all = {}
   for _, entry in ipairs(writeEntries) do all[#all + 1] = entry end
   for _, entry in ipairs(readEntries) do all[#all + 1] = entry end
-  if #all == 0 then state.syncing = false; return end
+  if #all == 0 then return finishSync() end
 
-  state.client:settings(settingsQuery(all), function(err, remote)
+  state.client:settings(settingsQuery(all), function(err, remote, kind)
     if err then
-      state.syncing = false
-      return Log.warn("Settings synchronisation failed: %s", err)
+      Log.warn("Settings synchronisation failed: %s", err)
+      if kind == "auth" then stop(err) end
+      return finishSync()
     end
     local references = App.Sync.references()
     local writes, pending = {}, {}
     for _, entry in ipairs(writeEntries) do
-      local name = entry.name
-      local remoteText = App.Sync.normalize(entry, remoteValue(remote, entry))
-      local localText = App.Sync.normalize(entry, App.Vars.get(name))
-      local action = App.Sync.decide(localText, remoteText, references[name])
-      if action == "write" then
-        local valid, reason = App.Sync.validate(entry, localText, metaOf(entry))
-        if valid then
-          writes[entry.module] = writes[entry.module] or {}
-          writes[entry.module][entry.id] = valid
-          pending[name] = valid
-        else
-          Log.warn("Value %s for '%s' rejected: %s; variable reset to the inverter's value %s",
-            localText, name, reason, remoteText)
-          App.Vars.set(name, remoteText)
-        end
-      elseif action == "adopt" or action == "conflict" then
-        if action == "conflict" then
-          Log.warn("'%s' was changed locally (%s) and on the inverter (%s); the inverter's value applies",
-            name, localText, remoteText)
-        elseif references[name] ~= nil then
-          Log.info("'%s' was changed on the inverter: %s -> %s", name, references[name], remoteText)
-        end
-        references[name] = remoteText
-        App.Vars.set(name, remoteText)
+      local value = reconcile(entry, remote, references)
+      if value then
+        writes[entry.module] = writes[entry.module] or {}
+        writes[entry.module][entry.id] = value
+        pending[entry.name] = value
       end
     end
     for _, entry in ipairs(readEntries) do
-      App.Vars.publish(entry, App.Catalog.present(entry, remoteValue(remote, entry)))
+      local value = App.Catalog.present(entry, remoteValue(remote, entry))
+      App.Vars.publish(entry, value)
+      App.Display.set(entry, value)
     end
     App.Sync.saveReferences(references)
+    if next(writes) == nil then return finishSync() end
 
-    if next(writes) == nil then
-      state.syncing = false
-      if state.syncAgain then state.syncAgain = false; App.syncSettings() end
-      return
-    end
-    state.client:writeSettings(writes, function(werr)
+    state.client:writeSettings(writes, function(werr, wkind)
       if werr then
         Log.error("Writing settings failed: %s; variables reset to the inverter's values", werr)
         for name in pairs(pending) do
           local entry = App.Catalog.get(name)
-          App.Vars.set(name, references[name] or App.Sync.normalize(entry, remoteValue(remote, entry)))
+          showSetting(entry, App.Sync.normalize(entry, remoteValue(remote, entry)))
         end
-        state.syncing = false
-        return
+        if wkind == "auth" then stop(werr) end
+        return finishSync()
       end
-      verifyWrites(pending, references)
+      verifyWrites(pending, 1)
     end)
   end)
 end
 
--- Actions ------------------------------------------------------------------------
+-- Actions ----------------------------------------------------------------------
 
 --- fibaro.call(id, "set", name, value): change a setting listed in writeValues.
 function App.set(name, value)
-  if not state.writeSet or not state.writeSet[name] then
+  if not (state.writeSet and state.writeSet[name]) then
     return Log.warn("set: '%s' is not listed in writeValues", tostring(name))
   end
   App.Vars.set(name, tostring(value))

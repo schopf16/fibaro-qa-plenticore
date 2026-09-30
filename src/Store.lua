@@ -13,8 +13,8 @@ end
 
 --- Stored table under `key`, or an empty table.
 function Store.get(key)
-  local ok, raw = pcall(qa.internalStorageGet, qa, key)
-  if not ok or type(raw) ~= "string" or raw == "" then return {} end
+  local read, raw = pcall(qa.internalStorageGet, qa, key)
+  if not read or type(raw) ~= "string" or raw == "" then return {} end
   local decoded, value = pcall(json.decode, raw)
   if decoded and type(value) == "table" then return value end
   Log.warn("Internal storage '%s' is unreadable and is reset", key)

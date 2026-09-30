@@ -60,6 +60,13 @@
     ],
     [
       {
+        "type": "label",
+        "id": "lblValues",
+        "text": ""
+      }
+    ],
+    [
+      {
         "type": "button",
         "id": "btnRefresh",
         "text": "Refresh",
@@ -106,6 +113,10 @@
     {
       "name": "Children",
       "path": "src/Children.lua"
+    },
+    {
+      "name": "Display",
+      "path": "src/Display.lua"
     },
     {
       "name": "main",

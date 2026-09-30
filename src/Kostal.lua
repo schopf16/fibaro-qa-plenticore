@@ -13,9 +13,9 @@ App.Kostal = {}
 local Kostal = App.Kostal
 Kostal.__index = Kostal
 
-local TIMEOUT_MS = 10000
+local TIMEOUT_MS   = 10000
 local PBKDF2_SLICE = 500
-local MAX_ROUNDS = 1000000
+local MAX_ROUNDS   = 1000000
 
 local function httpTransport(method, url, headers, body, callback)
   net.HTTPClient():request(url, {
@@ -28,15 +28,15 @@ end
 --- opts: host, password, user ("user" = plant owner), transport, random (for tests).
 function Kostal.new(opts)
   return setmetatable({
-    base = "http://" .. opts.host .. "/api/v1/",
-    password = opts.password,
-    user = opts.user or "user",
+    base      = "http://" .. opts.host .. "/api/v1/",
+    password  = opts.password,
+    user      = opts.user or "user",
     transport = opts.transport or httpTransport,
-    random = opts.random or App.Crypto.randomBytes,
-    session = nil,
-    salted = {},
+    random    = opts.random or App.Crypto.randomBytes,
+    session   = nil,
+    salted    = {}, -- salt|rounds -> PBKDF2 result, memory only
     loggingIn = false,
-    waiting = {},
+    waiting   = {}, -- callbacks waiting for the running login
   }, Kostal)
 end
 
@@ -68,9 +68,9 @@ function Kostal.scram(user, clientNonce, start, salted)
   local proof = {}
   for i = 1, #clientKey do proof[i] = string.char(clientKey:byte(i) ~ signature:byte(i)) end
   return {
-    proof = C.b64encode(table.concat(proof)),
+    proof           = C.b64encode(table.concat(proof)),
     serverSignature = C.hmac(C.hmac(salted, "Server Key"), authMsg),
-    sessionKey = C.hmac(storedKey, "Session Key" .. authMsg .. clientKey),
+    sessionKey      = C.hmac(storedKey, "Session Key" .. authMsg .. clientKey),
   }
 end
 
@@ -78,7 +78,12 @@ end
 function Kostal.sessionRequest(transactionId, sessionKey, token, iv)
   local C = App.Crypto
   local payload, tag = C.aesGcmEncrypt(sessionKey, iv, token)
-  return { transactionId = transactionId, iv = C.b64encode(iv), tag = C.b64encode(tag), payload = C.b64encode(payload) }
+  return {
+    transactionId = transactionId,
+    iv            = C.b64encode(iv),
+    tag           = C.b64encode(tag),
+    payload       = C.b64encode(payload),
+  }
 end
 
 local function validStart(start)
@@ -96,7 +101,8 @@ function Kostal:saltedPassword(salt, rounds, callback)
   local function slice()
     local result = step(PBKDF2_SLICE)
     if not result then return Timer.after("kostal.pbkdf2", 0, slice) end
-    Log.debug("Login: key derivation (%s rounds) took %s s CPU", rounds, string.format("%.1f", os.clock() - started))
+    local seconds = string.format("%.1f", os.clock() - started)
+    Log.debug("Login: key derivation (%s rounds) took %s s CPU", rounds, seconds)
     self.salted[key] = result
     callback(result)
   end
@@ -177,6 +183,16 @@ function Kostal:request(method, path, body, callback)
   end)
 end
 
+-- Call fn(moduleId, item) for every item of a module list response:
+-- [{ moduleid = "...", <field> = { item, ... } }, ...]
+local function eachItem(data, field, fn)
+  for _, module in ipairs(data) do
+    if type(module) == "table" and type(module.moduleid) == "string" and type(module[field]) == "table" then
+      for _, item in ipairs(module[field]) do fn(module.moduleid, item) end
+    end
+  end
+end
+
 local function moduleList(query, idsField)
   local body = {}
   for moduleId, ids in pairs(query) do body[#body + 1] = { moduleid = moduleId, [idsField] = ids } end
@@ -191,16 +207,12 @@ function Kostal:settings(query, callback)
     if err then return callback(err, nil, kind) end
     if type(data) ~= "table" then return callback("settings: unexpected response", nil, "protocol") end
     local values = {}
-    for _, module in ipairs(data) do
-      if type(module) == "table" and type(module.moduleid) == "string" and type(module.settings) == "table" then
-        values[module.moduleid] = values[module.moduleid] or {}
-        for _, item in ipairs(module.settings) do
-          if type(item) == "table" and type(item.id) == "string" and item.value ~= nil then
-            values[module.moduleid][item.id] = tostring(item.value)
-          end
-        end
+    eachItem(data, "settings", function(moduleId, item)
+      if type(item) == "table" and type(item.id) == "string" and item.value ~= nil then
+        values[moduleId] = values[moduleId] or {}
+        values[moduleId][item.id] = tostring(item.value)
       end
-    end
+    end)
     callback(nil, values)
   end)
 end
@@ -212,19 +224,17 @@ function Kostal:settingsMeta(callback)
     if err then return callback(err, nil, kind) end
     if type(data) ~= "table" then return callback("settings: unexpected response", nil, "protocol") end
     local meta = {}
-    for _, module in ipairs(data) do
-      if type(module) == "table" and type(module.moduleid) == "string" and type(module.settings) == "table" then
-        meta[module.moduleid] = {}
-        for _, item in ipairs(module.settings) do
-          if type(item) == "table" and type(item.id) == "string" then
-            meta[module.moduleid][item.id] = {
-              type = item.type, access = item.access,
-              min = tonumber(item.min), max = tonumber(item.max),
-            }
-          end
-        end
+    eachItem(data, "settings", function(moduleId, item)
+      if type(item) == "table" and type(item.id) == "string" then
+        meta[moduleId] = meta[moduleId] or {}
+        meta[moduleId][item.id] = {
+          type   = item.type,
+          access = item.access,
+          min    = tonumber(item.min),
+          max    = tonumber(item.max),
+        }
       end
-    end
+    end)
     callback(nil, meta)
   end)
 end
@@ -248,12 +258,10 @@ function Kostal:processdataIds(callback)
     if err then return callback(err, nil, kind) end
     if type(data) ~= "table" then return callback("processdata: unexpected response", nil, "protocol") end
     local ids = {}
-    for _, module in ipairs(data) do
-      if type(module) == "table" and type(module.moduleid) == "string" and type(module.processdataids) == "table" then
-        ids[module.moduleid] = {}
-        for _, id in ipairs(module.processdataids) do ids[module.moduleid][id] = true end
-      end
-    end
+    eachItem(data, "processdataids", function(moduleId, id)
+      ids[moduleId] = ids[moduleId] or {}
+      ids[moduleId][id] = true
+    end)
     callback(nil, ids)
   end)
 end
@@ -265,18 +273,13 @@ function Kostal:processdata(query, callback)
     if err then return callback(err, nil, kind) end
     if type(data) ~= "table" then return callback("processdata: unexpected response", nil, "protocol") end
     local values = {}
-    for _, module in ipairs(data) do
-      if type(module) == "table" and type(module.moduleid) == "string" and type(module.processdata) == "table" then
-        local target = {}
-        values[module.moduleid] = target
-        for _, item in ipairs(module.processdata) do
-          if type(item) == "table" and type(item.id) == "string" and type(item.value) == "number"
-            and item.value == item.value then
-            target[item.id] = item.value
-          end
-        end
+    eachItem(data, "processdata", function(moduleId, item)
+      local number = type(item) == "table" and type(item.id) == "string" and item.value
+      if type(number) == "number" and number == number then
+        values[moduleId] = values[moduleId] or {}
+        values[moduleId][item.id] = number
       end
-    end
+    end)
     callback(nil, values)
   end)
 end

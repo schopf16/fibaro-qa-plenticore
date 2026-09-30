@@ -54,10 +54,19 @@ function Sync.validate(entry, value, meta)
   return Sync.normalize(entry, number)
 end
 
+-- References are kept in memory and written to the store only when saved.
+local cache = nil
+
+function Sync.init()
+  cache = nil
+end
+
 function Sync.references()
-  return App.Store.get(STORE_KEY)
+  if not cache then cache = App.Store.get(STORE_KEY) end
+  return cache
 end
 
 function Sync.saveReferences(references)
+  cache = references
   App.Store.set(STORE_KEY, references)
 end

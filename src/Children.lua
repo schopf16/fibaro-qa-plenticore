@@ -12,10 +12,10 @@ local Children = App.Children
 
 local STORE_KEY = "children"
 
-local qa = nil
-local active = {}   -- name -> child object
-local missing = {}  -- name -> true once reported
-local last = {}     -- name -> last value written
+local qa      = nil
+local active  = {} -- name -> child object
+local missing = {} -- name -> true once reported
+local last    = {} -- name -> last value written
 
 local function classMap()
   local map = {}
@@ -25,14 +25,17 @@ local function classMap()
   return map
 end
 
-local function create(entry)
-  local child = qa:createChildDevice({ name = qa.name .. " " .. entry.name, type = entry.child.type }, QuickAppChild)
+-- Create a child in the parent's room, with unit and energy panel properties.
+local function create(entry, roomID)
+  local options = { name = qa.name .. " " .. entry.name, type = entry.child.type }
+  local child = qa:createChildDevice(options, QuickAppChild)
   child:setVariable("key", entry.name)
-  local properties = { unit = entry.unit }
-  if entry.child.rateType then properties.rateType = entry.child.rateType end
-  if entry.child.storeEnergyData then properties.storeEnergyData = true end
-  local parent = api.get("/devices/" .. tostring(qa.id)) or {}
-  api.put("/devices/" .. tostring(child.id), { roomID = parent.roomID, properties = properties })
+  local properties = {
+    unit            = entry.unit,
+    rateType        = entry.child.rateType,
+    storeEnergyData = entry.child.storeEnergyData or nil,
+  }
+  api.put("/devices/" .. tostring(child.id), { roomID = roomID, properties = properties })
   return child
 end
 
@@ -69,6 +72,7 @@ function Children.sync(quickApp, names)
     if not wanted[key] and App.Catalog.get(key) and byId[child.id] then remove(key, child) end
   end
 
+  local parent = api.get("/devices/" .. tostring(qa.id)) or {}
   for _, name in ipairs(names) do
     local id = mapping[name]
     if id and byId[id] then
@@ -79,7 +83,7 @@ function Children.sync(quickApp, names)
       Log.info("Adopted existing child %s for '%s'", byKey[name].id, name)
     else
       if id then Log.warn("Child %s for '%s' was deleted; creating a new one", id, name) end
-      local ok, child = pcall(create, App.Catalog.get(name))
+      local ok, child = pcall(create, App.Catalog.get(name), parent.roomID)
       if ok then
         active[name], mapping[name] = child, child.id
         Log.info("Created child %s for '%s'", child.id, name)
@@ -98,22 +102,14 @@ function Children.sync(quickApp, names)
   App.Store.set(STORE_KEY, mapping)
 end
 
---- Names of the listed children, for reading their values.
-function Children.names()
-  local names = {}
-  for name in pairs(active) do names[#names + 1] = name end
-  table.sort(names)
-  return names
-end
-
 --- Update child values. Children deleted while running are reported once.
 function Children.update(values, existingIds)
   for name, child in pairs(active) do
     if existingIds and not existingIds[child.id] then
       if not missing[name] then
         missing[name] = true
-        Log.warn("Child %s for '%s' was deleted; it is recreated at the next start while listed in childValues",
-          child.id, name)
+        Log.warn("Child %s for '%s' was deleted; it is recreated at the next start "
+          .. "while listed in childValues", child.id, name)
       end
     elseif values[name] ~= nil and App.Catalog.changed(App.Catalog.get(name), last[name], values[name]) then
       child:updateProperty("value", values[name])
@@ -125,6 +121,8 @@ end
 --- IDs of the children that still exist on the controller.
 function Children.existingIds()
   local ids = {}
-  for _, device in ipairs(api.get("/devices?parentId=" .. tostring(qa.id)) or {}) do ids[device.id] = true end
+  for _, device in ipairs(api.get("/devices?parentId=" .. tostring(qa.id)) or {}) do
+    ids[device.id] = true
+  end
   return ids
 end
