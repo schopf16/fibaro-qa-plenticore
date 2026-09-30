@@ -139,6 +139,22 @@ test("login errors are classified", function()
   ok(err:find("signature", 1, true), err)
 end)
 
+-- Platform -------------------------------------------------------------------
+
+test("a Lua with 32-bit integers stops with a clear status instead of computing wrong values", function()
+  local qa = FakeQA.new({})
+  I18n.register(App.STRINGS)
+  I18n.setLanguage("en")
+  Ui.init(qa, App.UI)
+  local real = math.maxinteger
+  math.maxinteger = 2147483647
+  local started, err = pcall(App.start, qa, { pollIntervalSec = 30 })
+  math.maxinteger = real
+  ok(started, err)
+  eq(qa.properties.log, "Controller not supported - 64-bit Lua required")
+  ok(logText():find("needs 64-bit integers", 1, true), logText())
+end)
+
 -- Catalog --------------------------------------------------------------------
 
 local Catalog = App.Catalog

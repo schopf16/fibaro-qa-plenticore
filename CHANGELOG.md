@@ -18,5 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Value table in the user interface with names in English, German, French
   and Italian, and units.
 - Built-in energy meter icon instead of the generic device icon.
+- The QuickApp stops with "Controller not supported" on a Lua without
+  64-bit integers, which the inverter login requires.
 
 [Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/commits/main
