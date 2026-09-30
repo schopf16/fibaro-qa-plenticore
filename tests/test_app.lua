@@ -223,18 +223,18 @@ end)
 test("values are shown with unit, switches as on/off, time control as windows", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("de")
-  eq(Display.format(Catalog.get("pvPower"), 1042), "1042 W")
-  eq(Display.format(Catalog.get("yieldDay"), 27.19), "27.19 kWh")
-  eq(Display.format(Catalog.get("batterySmartControl"), "1"), "ein")
-  eq(Display.format(Catalog.get("inverterState"), "FeedIn"), "FeedIn")
-  eq(Display.format(Catalog.get("pvPower"), nil), "-")
+  eq({ Display.format(Catalog.get("pvPower"), 1042) }, { "1042", "W" })
+  eq({ Display.format(Catalog.get("yieldDay"), 27.19) }, { "27.19", "kWh" })
+  eq({ Display.format(Catalog.get("batterySmartControl"), "1") }, { "ein", "" })
+  eq({ Display.format(Catalog.get("inverterState"), "FeedIn") }, { "FeedIn", "" })
+  eq({ Display.format(Catalog.get("pvPower"), nil) }, { "-", "" })
   local monday = string.rep("0", 47) .. "2" .. string.rep("0", 48)
-  eq(Display.format(Catalog.get("batteryTimeControlMon"), monday), "11:45-12:00 (2)")
+  eq({ Display.format(Catalog.get("batteryTimeControlMon"), monday) }, { "11:45-12:00 (2)", "" })
   eq(Display.slots(string.rep("1", 8) .. string.rep("0", 84) .. string.rep("2", 4)), "00:00-02:00 (1), 23:00-24:00 (2)")
   eq(Display.slots(string.rep("0", 96)), "-")
 end)
 
-test("the value list has one translated label per value", function()
+test("the value table has name, value and unit in separate labels", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("fr")
   local qa = FakeQA.new({})
@@ -245,18 +245,20 @@ test("the value list has one translated label per value", function()
   Display.set(Catalog.get("pvPower"), 500)
   Display.set(Catalog.get("batterySoc"), 80)
   Display.render()
-  eq(qa.views.lblValue1.text, "Puissance PV: 500 W")
-  eq(qa.views.lblValue2.text, "Charge batterie: 80 %")
-  eq(writes, 2)
+  eq({ qa.views.lblName1.text, qa.views.lblValue1.text, qa.views.lblUnit1.text }, { "Puissance PV", "500", "W" })
+  eq({ qa.views.lblName2.text, qa.views.lblValue2.text, qa.views.lblUnit2.text }, { "Charge batterie", "80", "%" })
+  eq(writes, 6)
   Display.render()
-  eq(writes, 2, "unchanged labels are not written again")
+  eq(writes, 6, "unchanged labels are not written again")
   Display.set(Catalog.get("pvPower"), 520)
   Display.render()
-  eq(writes, 3)
+  eq(writes, 7, "only the changed value label is written")
 end)
 
-local function row(name)
-  return { type = "horizontal", components = { { name = name, type = "label" } } }
+local function row(...)
+  local components = {}
+  for i, name in ipairs({ ... }) do components[i] = { name = name, type = "label" } end
+  return { type = "horizontal", components = components }
 end
 
 local function rowNames(rows)
@@ -265,13 +267,20 @@ local function rowNames(rows)
   return names
 end
 
-test("the layout gets exactly one value row per listed value", function()
+test("the layout gets exactly one table row per listed value", function()
   local base = { row("lblStatus"), row("btnRefresh") }
-  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblValue1", "lblValue2", "btnRefresh" })
+  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
   local current = Display.layout(base, 3)
+  eq(#current[2].components, 3)
+  eq(current[2].components[2].style.textAlign, "right")
   eq(Display.layout(current, 3), nil, "unchanged count: no new layout, no restart")
-  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblValue1", "btnRefresh" })
+  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblName1", "btnRefresh" })
   eq(rowNames(Display.layout(current, 0)), { "lblStatus", "btnRefresh" })
+end)
+
+test("rows of the earlier one-label layout are replaced", function()
+  local old = { row("lblStatus"), row("lblValue1"), row("lblValue2"), row("btnRefresh") }
+  eq(rowNames(Display.layout(old, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
 end)
 
 -- Children ---------------------------------------------------------------------

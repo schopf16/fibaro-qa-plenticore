@@ -1,46 +1,64 @@
--- Display: one line per listed value in the QuickApp's user interface, with
--- the name in the selected language and the unit. The HC3 shows a label on a
--- single line, so every value has its own label row (lblValue1, lblValue2,
--- ...). The QuickApp adds or removes these rows itself when the lists change;
--- saving the new layout restarts it once.
+-- Display: the listed values as a table in the QuickApp's user interface.
+--
+-- The HC3 shows a label on a single line, so every value has its own row of
+-- three labels - name (in the selected language), value and unit - whose
+-- widths and alignment form the columns. The QuickApp adds or removes these
+-- rows itself when the lists change; saving the new layout restarts it once.
 
 App.Display = {}
 local Display = App.Display
 
-local LABEL = "lblValue"
+-- One column per label in a value row: id prefix, share of the width, alignment.
+local COLUMNS = {
+  { prefix = "lblName",  weight = "0.60", align = "left"  },
+  { prefix = "lblValue", weight = "0.28", align = "right" },
+  { prefix = "lblUnit",  weight = "0.12", align = "left"  },
+}
 
 local qa    = nil
 local names = {} -- names in display order
-local texts = {} -- name -> formatted value
+local cells = {} -- name -> { value, unit }
 local shown = {} -- label id -> text currently shown
 
+-- A row of this QuickApp's value table (current or earlier layout).
 local function isValueRow(row)
   local first = type(row) == "table" and type(row.components) == "table" and row.components[1]
-  return type(first) == "table" and type(first.name) == "string" and first.name:find("^" .. LABEL .. "%d+$") ~= nil
+  local name  = type(first) == "table" and type(first.name) == "string" and first.name or ""
+  return name:find("^lblName%d+$") ~= nil or name:find("^lblValue%d+$") ~= nil
+end
+
+local function isCurrentRow(row)
+  return #row.components == #COLUMNS and row.components[1].name:find("^lblName%d+$") ~= nil
 end
 
 local function valueRow(index)
-  return {
-    type       = "horizontal",
-    style      = { weight = "1.0" },
-    components = { { name = LABEL .. index, text = "", type = "label", style = { weight = "1.00" } } },
-  }
+  local components = {}
+  for i, column in ipairs(COLUMNS) do
+    components[i] = {
+      name  = column.prefix .. index,
+      text  = "",
+      type  = "label",
+      style = { weight = column.weight, textAlign = column.align },
+    }
+  end
+  return { type = "horizontal", style = { weight = "1.0" }, components = components }
 end
 
 --- The UI rows with exactly `count` value rows after lblStatus, or nil if
--- uiView already has them.
+-- uiView already has them in the current layout.
 function Display.layout(uiView, count)
-  local rows, existing, insertAt = {}, 0, 1
+  local rows, existing, current, insertAt = {}, 0, true, 1
   for _, row in ipairs(uiView) do
     if isValueRow(row) then
       existing = existing + 1
+      current  = current and isCurrentRow(row)
     else
       rows[#rows + 1] = row
       local first = row.components and row.components[1]
       if first and first.name == "lblStatus" then insertAt = #rows + 1 end
     end
   end
-  if existing == count then return nil end
+  if existing == count and current then return nil end
   for i = count, 1, -1 do table.insert(rows, insertAt, valueRow(i)) end
   return rows
 end
@@ -53,13 +71,13 @@ function Display.ensureLayout(quickApp, count)
   if type(uiView) ~= "table" then return false end
   local rows = Display.layout(uiView, count)
   if not rows then return false end
-  Log.info("Rebuilding the value list for %s value(s); the QuickApp restarts", count)
+  Log.info("Rebuilding the value table for %s value(s); the QuickApp restarts", count)
   api.put("/devices/" .. tostring(quickApp.id), { properties = { uiView = rows } })
   return true
 end
 
 function Display.init(quickApp, list)
-  qa, names, texts, shown = quickApp, list, {}, {}
+  qa, names, cells, shown = quickApp, list, {}, {}
 end
 
 local function clock(quarter)
@@ -81,29 +99,33 @@ function Display.slots(text)
   return #windows > 0 and table.concat(windows, ", ") or "-"
 end
 
---- The text of one value, with unit.
+--- Value text and unit of one value.
 function Display.format(entry, value)
-  if value == nil or value == "" then return "-" end
-  if entry.format == "slots" then return Display.slots(tostring(value)) end
-  if entry.format == "switch" then return I18n.t(tostring(value) == "1" and "value.on" or "value.off") end
-  if entry.unit and entry.unit ~= "" then return tostring(value) .. " " .. entry.unit end
-  return tostring(value)
+  if value == nil or value == "" then return "-", "" end
+  if entry.format == "slots" then return Display.slots(tostring(value)), "" end
+  if entry.format == "switch" then return I18n.t(tostring(value) == "1" and "value.on" or "value.off"), "" end
+  return tostring(value), entry.unit or ""
 end
 
 function Display.set(entry, value)
-  texts[entry.name] = Display.format(entry, value)
+  local text, unit = Display.format(entry, value)
+  cells[entry.name] = { text, unit }
+end
+
+local function show(id, text)
+  if shown[id] == text then return end
+  shown[id] = text
+  local ok, err = pcall(qa.updateView, qa, id, "text", text)
+  if not ok then Log.warn("Cannot update UI element '%s': %s", id, err) end
 end
 
 --- Write the labels whose text changed.
 function Display.render()
   if not qa then return end
   for i, name in ipairs(names) do
-    local id   = LABEL .. i
-    local text = I18n.t("value." .. name) .. ": " .. (texts[name] or "-")
-    if shown[id] ~= text then
-      shown[id] = text
-      local ok, err = pcall(qa.updateView, qa, id, "text", text)
-      if not ok then Log.warn("Cannot update UI element '%s': %s", id, err) end
-    end
+    local cell = cells[name] or { "-", "" }
+    show(COLUMNS[1].prefix .. i, I18n.t("value." .. name))
+    show(COLUMNS[2].prefix .. i, cell[1])
+    show(COLUMNS[3].prefix .. i, cell[2])
   end
 end
