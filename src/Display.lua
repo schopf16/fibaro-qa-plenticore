@@ -73,8 +73,10 @@ function Display.ensureLayout(quickApp, count)
   local rows = Display.layout(uiView, count)
   if not rows then return false end
   Log.info("Rebuilding the value table for %s value(s); the QuickApp restarts", count)
-  api.put("/devices/" .. tostring(quickApp.id), { properties = { uiView = rows } })
-  return true
+  local _, status = api.put("/devices/" .. tostring(quickApp.id), { properties = { uiView = rows } })
+  if math.type(status) == "integer" and status < 300 then return true end
+  Log.error("Cannot save the value table layout (HTTP %s); values are not shown", status)
+  return false
 end
 
 function Display.init(quickApp, list)
