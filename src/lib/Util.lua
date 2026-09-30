@@ -15,6 +15,20 @@ function Util.escapeHtml(s)
   return (tostring(s):gsub('[&<>"]', HTML_ESCAPES))
 end
 
+local ASCII = {
+  ["ä"] = "ae", ["ö"] = "oe", ["ü"] = "ue", ["Ä"] = "Ae", ["Ö"] = "Oe", ["Ü"] = "Ue", ["ß"] = "ss",
+  ["à"] = "a", ["â"] = "a", ["á"] = "a", ["ç"] = "c", ["é"] = "e", ["è"] = "e", ["ê"] = "e", ["ë"] = "e",
+  ["î"] = "i", ["ï"] = "i", ["ì"] = "i", ["í"] = "i", ["ô"] = "o", ["ò"] = "o", ["ó"] = "o", ["ù"] = "u",
+  ["û"] = "u", ["ú"] = "u", ["É"] = "E", ["È"] = "E", ["À"] = "A", ["Ç"] = "C",
+  ["…"] = "...", ["–"] = "-", ["—"] = "-", ["·"] = "|", ["«"] = '"', ["»"] = '"', ["“"] = '"', ["”"] = '"',
+  ["‘"] = "'", ["’"] = "'", ["°"] = " deg", ["€"] = "EUR", ["\u{A0}"] = " ",
+}
+
+--- Replace non-ASCII characters with ASCII look-alikes ("?" if unknown).
+function Util.toAscii(s)
+  return (tostring(s):gsub("[\xC2-\xF4][\x80-\xBF]*", function(ch) return ASCII[ch] or "?" end))
+end
+
 --- Escape Lua pattern magic characters so `s` can be matched literally.
 function Util.escapePattern(s)
   return (s:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))

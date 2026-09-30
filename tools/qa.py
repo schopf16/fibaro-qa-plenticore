@@ -253,7 +253,9 @@ class Hc3:
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = resp.read()
-                    return json.loads(raw) if raw.strip() else None
+                    # The HC3 may return invalid UTF-8 (device "log" property).
+                    text = raw.decode("utf-8", errors="replace")
+                    return json.loads(text) if text.strip() else None
             except urllib.error.HTTPError as err:
                 # The controller answers 5xx when it is busy; client errors are final.
                 if err.code < 500 or attempt == self.attempts:

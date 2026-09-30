@@ -2,6 +2,7 @@
 """Upload the sources to your development QuickApp on the HC3.
 
     python tools/upload.py            # upload changed files
+    python tools/upload.py --ui       # also replace the UI layout (labels, buttons)
     python tools/upload.py --dry-run  # show what would change
 
 Configuration comes from ../.env and .env (both git-ignored):
@@ -9,9 +10,10 @@ Configuration comes from ../.env and .env (both git-ignored):
     HC3_DEV_QA_ID                     ID of the development QuickApp
 
 Safety: the target's name must be the manifest name followed by " [DEV]",
-so a production QuickApp can never be overwritten by accident. Only code files
-are written; QuickApp variables (your real configuration) and the UI layout
-are left alone - after UI changes, import a freshly built .fqa instead.
+so a production QuickApp can never be overwritten by accident. Code files are
+written, and with --ui the UI layout; QuickApp variables (your real
+configuration) and child devices are never touched. Every change restarts the
+QuickApp.
 """
 
 from __future__ import annotations
@@ -21,12 +23,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from qa import Hc3, QaError, collect_files, load_env, load_manifest, validate  # noqa: E402
+from qa import Hc3, QaError, build_fqa, collect_files, load_env, load_manifest, validate  # noqa: E402
 
 DEV_SUFFIX = " [DEV]"
 
 
-def upload(dry_run: bool) -> None:
+def upload(dry_run: bool, ui: bool) -> None:
     manifest = load_manifest()
     problems = validate(manifest)
     if problems:
@@ -77,6 +79,16 @@ def upload(dry_run: bool) -> None:
     if missing:
         print(f"note: QuickApp variables missing on the HC3 (add them by hand): {', '.join(missing)}")
 
+    if ui:
+        layout = build_fqa(manifest, files)["initialProperties"]
+        print("update UI layout")
+        if not dry_run:
+            hc3.request("PUT", f"/api/devices/{qa_id}", {"properties": {
+                "uiView": layout["uiView"],
+                "uiCallbacks": layout["uiCallbacks"],
+                "viewLayout": layout["viewLayout"],
+            }})
+
     verb = "would change" if dry_run else "changed"
     print(f"{verb} {changed} of {len(files)} files on QuickApp {qa_id}")
 
@@ -84,9 +96,10 @@ def upload(dry_run: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="show changes without uploading")
+    parser.add_argument("--ui", action="store_true", help="also replace the UI layout from the manifest")
     args = parser.parse_args()
     try:
-        upload(args.dry_run)
+        upload(args.dry_run, args.ui)
     except QaError as err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1

@@ -7,6 +7,11 @@ function QuickApp:onInit()
   Safe.call("onInit", Boot.run, self, App)
 end
 
+--- fibaro.call(id, "set", "batteryMinSoc", 30)
+function QuickApp:set(name, value)
+  Safe.call("set", App.set, name, value)
+end
+
 function QuickApp:uibtnRefreshOnReleased(event)
   Safe.call("btnRefresh", App.refresh, event)
 end

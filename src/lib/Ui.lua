@@ -32,10 +32,13 @@ function Ui.setText(id, key, params)
 end
 
 --- Show a translated status in the device's log line and the status label.
+-- The HC3 keeps only one byte per character in the log line ("ü" becomes
+-- invalid UTF-8, "…" becomes "&"), so it gets ASCII; the label shows the
+-- full text.
 function Ui.setStatus(key, params)
   if not qa then return end
   local text = I18n.t(key, params)
-  local ok, err = pcall(qa.updateProperty, qa, "log", text)
+  local ok, err = pcall(qa.updateProperty, qa, "log", Util.toAscii(text))
   if not ok then Log.warn("Cannot update status line: %s", err) end
   if statusLabel then safeUpdateView(statusLabel, "text", text) end
 end
