@@ -93,6 +93,10 @@ def validate(manifest: dict) -> list[str]:
     if problems:
         return problems
 
+    icon = manifest.get("deviceIcon")
+    if icon is not None and (not isinstance(icon, int) or isinstance(icon, bool) or icon <= 0):
+        problems.append("manifest: deviceIcon must be the ID of a built-in HC3 device icon")
+
     if not SEMVER.match(manifest["version"]):
         problems.append(f"manifest: version '{manifest['version']}' is not SemVer (MAJOR.MINOR.PATCH)")
 
@@ -185,27 +189,31 @@ def build_fqa(manifest: dict, files: list[dict]) -> dict:
                     for row in rows]
     callbacks = [{"name": e["id"], "eventType": event, "callback": callback_name(e["id"], event)}
                  for row in rows for e in row for event in button_events(e)]
+    properties = {
+        "viewLayout": {
+            "$jason": {
+                "head": {"title": "quickApp_device"},
+                "body": {"header": {"style": {"height": "0"}, "title": "quickApp_device"},
+                         "sections": {"items": layout_items}},
+            },
+        },
+        "uiView": ui_view,
+        "useUiView": True,
+        "uiCallbacks": callbacks,
+        "quickAppVariables": [{"name": v["name"], "type": v["type"], "value": v["value"]}
+                              for v in manifest.get("quickAppVariables", [])],
+        "typeTemplateInitialized": True,
+        "userDescription": manifest.get("userDescription", ""),
+    }
+    if manifest.get("deviceIcon"):
+        # A built-in icon ID; the HC3 applies it on import (verified on 5.220.11).
+        properties["deviceIcon"] = manifest["deviceIcon"]
     return {
         "name": manifest["name"],
         "type": manifest["type"],
         "apiVersion": "1.3",
         "initialInterfaces": manifest.get("initialInterfaces", []),
-        "initialProperties": {
-            "viewLayout": {
-                "$jason": {
-                    "head": {"title": "quickApp_device"},
-                    "body": {"header": {"style": {"height": "0"}, "title": "quickApp_device"},
-                             "sections": {"items": layout_items}},
-                },
-            },
-            "uiView": ui_view,
-            "useUiView": True,
-            "uiCallbacks": callbacks,
-            "quickAppVariables": [{"name": v["name"], "type": v["type"], "value": v["value"]}
-                                  for v in manifest.get("quickAppVariables", [])],
-            "typeTemplateInitialized": True,
-            "userDescription": manifest.get("userDescription", ""),
-        },
+        "initialProperties": properties,
         "files": [{"name": f["name"], "isMain": f["isMain"], "isOpen": False,
                    "content": f["content"]} for f in files],
     }
