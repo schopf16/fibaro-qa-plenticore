@@ -5,6 +5,7 @@
   "type": "com.fibaro.deviceController",
   "repository": "https://github.com/schopf16/fibaro-qa-plenticore",
   "userDescription": "Monitors and controls KOSTAL PLENTICORE and PIKO IQ inverters through their local REST API.",
+  "deviceIcon": 715,
   "initialInterfaces": [],
   "_comment_variables": "Defaults shipped to users. Host-specific values (addresses, credentials, serial numbers) stay empty. Every variable must match Config.COMMON or App.CONFIG; secrets use type password. tests/test_manifest.lua enforces this.",
   "quickAppVariables": [
