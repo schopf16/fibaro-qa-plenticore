@@ -70,11 +70,12 @@ local list = {}
 
 local function add(entry)
   list[#list + 1] = entry
+  return entry
 end
 
 -- Instantaneous power in W.
 local function power(name, module, id, rateType)
-  add({ name = name, kind = "process", module = module, id = id, unit = "W", decimals = 0, deadband = 10,
+  return add({ name = name, kind = "process", module = module, id = id, unit = "W", decimals = 0, deadband = 10,
         child = { type = POWER_METER, rateType = rateType } })
 end
 
@@ -92,6 +93,20 @@ local function percent(name, module, id)
         child = { type = SENSOR } })
 end
 
+-- Measured value shown as text (enum) or plain number.
+local function state(name, module, id, enum)
+  add({ name = name, kind = "process", module = module, id = id, unit = "", enum = enum })
+end
+
+local function count(name, module, id)
+  add({ name = name, kind = "process", module = module, id = id, unit = "", decimals = 0, deadband = 1 })
+end
+
+-- Device information; ids joins several settings with a space.
+local function info(name, ids, enum)
+  add({ name = name, kind = "info", module = LOCAL, ids = ids, enum = enum })
+end
+
 -- format: "number", "switch" (0/1) or "slots" (96 quarter hours).
 local function setting(name, id, unit, format)
   add({ name = name, kind = "setting", module = LOCAL, id = id, unit = unit, format = format })
@@ -100,11 +115,10 @@ end
 -- Measured values ------------------------------------------------------------
 
 -- Dc_P includes the battery on hybrid inverters, so PV power is the sum of the strings.
-add({ name = "pvPower", kind = "process", unit = "W", decimals = 0, deadband = 10,
-      sum = { { "devices:local:pv1", "P" }, { "devices:local:pv2", "P" }, { "devices:local:pv3", "P" } },
-      child = { type = POWER_METER, rateType = "production" } })
+local PV_STRINGS = { { "devices:local:pv1", "P" }, { "devices:local:pv2", "P" }, { "devices:local:pv3", "P" } }
 
 --    name               module               id            rateType
+power("pvPower",         nil,                 nil,          "production").sum = PV_STRINGS
 power("pv1Power",        "devices:local:pv1", "P",          "production")
 power("pv2Power",        "devices:local:pv2", "P",          "production")
 power("pv3Power",        "devices:local:pv3", "P",          "production")
@@ -118,12 +132,9 @@ power("batteryPower",    BATTERY,             "P",          nil)
 
 percent("batterySoc", BATTERY, "SoC")
 
-add({ name = "batteryCycles",      kind = "process", module = BATTERY, id = "Cycles",
-      unit = "", decimals = 0, deadband = 1 })
-add({ name = "inverterState",      kind = "process", module = LOCAL,   id = "Inverter:State",
-      unit = "", enum = INVERTER_STATES })
-add({ name = "energyManagerState", kind = "process", module = LOCAL,   id = "EM_State",
-      unit = "", enum = ENERGY_MANAGER_STATES })
+count("batteryCycles",      BATTERY, "Cycles")
+state("inverterState",      LOCAL,   "Inverter:State", INVERTER_STATES)
+state("energyManagerState", LOCAL,   "EM_State",       ENERGY_MANAGER_STATES)
 
 --     name                 statistic           rateType
 energy("yield",             "Yield",            "production")
@@ -155,13 +166,11 @@ setting("shadowManagement",          "Generator:ShadowMgmt:Enable",        "",  
 
 -- Device information ---------------------------------------------------------
 
-add({ name = "model",                  kind = "info", module = LOCAL,
-      ids = { "Branding:ProductName1", "Branding:ProductName2" } })
-add({ name = "firmwareVersion",        kind = "info", module = LOCAL, id = "Properties:VersionMC" })
-add({ name = "batteryType",            kind = "info", module = LOCAL, id = "Battery:Type",
-      enum = BATTERY_TYPES })
-add({ name = "batteryExternalControl", kind = "info", module = LOCAL, id = "Battery:ExternControl",
-      enum = BATTERY_CONTROL })
+--   name                      settings                                             enum
+info("model",                  { "Branding:ProductName1", "Branding:ProductName2" }, nil)
+info("firmwareVersion",        { "Properties:VersionMC" },                           nil)
+info("batteryType",            { "Battery:Type" },                                   BATTERY_TYPES)
+info("batteryExternalControl", { "Battery:ExternControl" },                          BATTERY_CONTROL)
 
 -- Access -----------------------------------------------------------------------
 

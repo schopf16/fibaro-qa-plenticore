@@ -8,19 +8,18 @@ App = {}
 
 App.STRINGS = Strings
 
-local LIST_LENGTH = 2000
+local LIST_LENGTH   = 2000
+local DEFAULT_READ  = "pvPower, homePower, gridPower, batteryPower, batterySoc, yieldDay"
+local DEFAULT_WRITE = "batteryMinSoc, batterySmartControl"
 
 --- Project variables, added to Config.COMMON (logLevel, language).
 App.CONFIG = {
   { name = "host",            type = "host",    required = true },
   { name = "password",        type = "secret",  required = true },
   { name = "pollIntervalSec", type = "integer", default = 30, min = 10, max = 3600 },
-  { name = "readValues",      type = "string",  maxLength = LIST_LENGTH,
-    default = "pvPower, homePower, gridPower, batteryPower, batterySoc, yieldDay" },
-  { name = "writeValues",     type = "string",  maxLength = LIST_LENGTH,
-    default = "batteryMinSoc, batterySmartControl" },
-  { name = "childValues",     type = "string",  maxLength = LIST_LENGTH,
-    default = "none" },
+  { name = "readValues",      type = "string",  default = DEFAULT_READ,  maxLength = LIST_LENGTH },
+  { name = "writeValues",     type = "string",  default = DEFAULT_WRITE, maxLength = LIST_LENGTH },
+  { name = "childValues",     type = "string",  default = "none",        maxLength = LIST_LENGTH },
 }
 
 App.UI = {
@@ -106,6 +105,9 @@ function App.start(qa, cfg)
   for _, name in ipairs(lists.read) do state.readSet[name] = true end
   for _, name in ipairs(lists.write) do state.writeSet[name] = true end
 
+  local shownNames = displayNames(lists)
+  if App.Display.ensureLayout(qa, #shownNames) then return end
+
   App.Store.init(qa)
   App.Sync.init()
   App.Vars.init(qa)
@@ -114,7 +116,7 @@ function App.start(qa, cfg)
   for name in pairs(state.writeSet) do keep[name] = true end
   App.Vars.removeUnlisted(keep)
   App.Children.sync(qa, lists.children)
-  App.Display.init(qa, displayNames(lists))
+  App.Display.init(qa, shownNames)
   Log.info("Reading %s value(s), synchronising %s setting(s), %s child device(s)",
     #lists.read, #lists.write, #lists.children)
 
