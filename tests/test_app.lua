@@ -147,9 +147,9 @@ test("a Lua with 32-bit integers stops with a clear status instead of computing 
   I18n.setLanguage("en")
   Ui.init(qa, App.UI)
   local real = math.maxinteger
-  math.maxinteger = 2147483647
+  math.maxinteger = 2147483647 -- luacheck: ignore 122 (simulates a 32-bit Lua)
   local started, err = pcall(App.start, qa, { pollIntervalSec = 30 })
-  math.maxinteger = real
+  math.maxinteger = real -- luacheck: ignore 122
   ok(started, err)
   eq(qa.properties.log, "Controller not supported - 64-bit Lua required")
   ok(logText():find("needs 64-bit integers", 1, true), logText())
