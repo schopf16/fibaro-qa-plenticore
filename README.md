@@ -1,5 +1,7 @@
 # KOSTAL PLENTICORE
 
+![KOSTAL PLENTICORE QuickApp for FIBARO Home Center 3](assets/marketplace/plenticore-marketplace-1420x1000.png)
+
 A QuickApp for the Fibaro Home Center 3 that reads and writes KOSTAL
 PLENTICORE and PIKO IQ inverters through their local REST API. Selected
 values appear as QuickApp variables, optionally as child devices, and
