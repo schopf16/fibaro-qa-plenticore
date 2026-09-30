@@ -1,23 +1,24 @@
 -- Display: the listed values as a table in the QuickApp's user interface.
 --
 -- The HC3 shows a label on a single line, so every value has its own row of
--- three labels - name (in the selected language), value and unit - whose
--- widths and alignment form the columns. The QuickApp adds or removes these
--- rows itself when the lists change; saving the new layout restarts it once.
+-- two labels: the name in the selected language, and the value with its unit.
+-- The HC3 gives all labels of a row the same width and ignores weight and
+-- alignment, so two columns keep the names from wrapping. The QuickApp adds or
+-- removes these rows itself when the lists change; saving the new layout
+-- restarts it once.
 
 App.Display = {}
 local Display = App.Display
 
--- One column per label in a value row: id prefix, share of the width, alignment.
+-- One column per label in a value row: id prefix and share of the width.
 local COLUMNS = {
-  { prefix = "lblName",  weight = "0.60", align = "left"  },
-  { prefix = "lblValue", weight = "0.28", align = "right" },
-  { prefix = "lblUnit",  weight = "0.12", align = "left"  },
+  { prefix = "lblName",  weight = "0.50" },
+  { prefix = "lblValue", weight = "0.50" },
 }
 
 local qa    = nil
 local names = {} -- names in display order
-local cells = {} -- name -> { value, unit }
+local texts = {} -- name -> value with unit
 local shown = {} -- label id -> text currently shown
 
 -- A row of this QuickApp's value table (current or earlier layout).
@@ -38,7 +39,7 @@ local function valueRow(index)
       name  = column.prefix .. index,
       text  = "",
       type  = "label",
-      style = { weight = column.weight, textAlign = column.align },
+      style = { weight = column.weight },
     }
   end
   return { type = "horizontal", style = { weight = "1.0" }, components = components }
@@ -77,7 +78,7 @@ function Display.ensureLayout(quickApp, count)
 end
 
 function Display.init(quickApp, list)
-  qa, names, cells, shown = quickApp, list, {}, {}
+  qa, names, texts, shown = quickApp, list, {}, {}
 end
 
 local function clock(quarter)
@@ -99,17 +100,17 @@ function Display.slots(text)
   return #windows > 0 and table.concat(windows, ", ") or "-"
 end
 
---- Value text and unit of one value.
+--- The text of one value, with unit.
 function Display.format(entry, value)
-  if value == nil or value == "" then return "-", "" end
-  if entry.format == "slots" then return Display.slots(tostring(value)), "" end
-  if entry.format == "switch" then return I18n.t(tostring(value) == "1" and "value.on" or "value.off"), "" end
-  return tostring(value), entry.unit or ""
+  if value == nil or value == "" then return "-" end
+  if entry.format == "slots" then return Display.slots(tostring(value)) end
+  if entry.format == "switch" then return I18n.t(tostring(value) == "1" and "value.on" or "value.off") end
+  if entry.unit and entry.unit ~= "" then return tostring(value) .. " " .. entry.unit end
+  return tostring(value)
 end
 
 function Display.set(entry, value)
-  local text, unit = Display.format(entry, value)
-  cells[entry.name] = { text, unit }
+  texts[entry.name] = Display.format(entry, value)
 end
 
 local function show(id, text)
@@ -123,9 +124,7 @@ end
 function Display.render()
   if not qa then return end
   for i, name in ipairs(names) do
-    local cell = cells[name] or { "-", "" }
     show(COLUMNS[1].prefix .. i, I18n.t("value." .. name))
-    show(COLUMNS[2].prefix .. i, cell[1])
-    show(COLUMNS[3].prefix .. i, cell[2])
+    show(COLUMNS[2].prefix .. i, texts[name] or "-")
   end
 end
