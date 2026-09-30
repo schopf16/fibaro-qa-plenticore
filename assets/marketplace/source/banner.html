@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; width: 1420px; height: 1000px; overflow: hidden; }
+  body {
+    font-family: "Barlow", "Segoe UI", sans-serif; color: #1e2a3a;
+    background: radial-gradient(ellipse 80% 90% at 72% 45%, #f7f8fa 0%, #e9ecf0 55%, #dde1e7 100%);
+    position: relative;
+  }
+  .text { position: absolute; left: 100px; top: 215px; width: 760px; }
+  .logo { width: 300px; display: block; }
+  h1 { margin: 52px 0 0; font-size: 96px; font-weight: 800; letter-spacing: 3px; line-height: 1; color: #1e467d; }
+  .plus { font-weight: 500; font-size: 50px; letter-spacing: 1px; color: #1e467d; margin-left: 6px; }
+  .sub { margin-top: 22px; font-size: 38px; white-space: nowrap; font-weight: 500; color: #2b3647; }
+  .bar { margin-top: 40px; width: 96px; height: 8px; border-radius: 4px; background: #9bc31c; }
+  .features { margin-top: 30px; font-size: 30px; font-weight: 400; color: #4a5566; line-height: 1.45; }
+  .inverter { position: absolute; right: 95px; top: 170px; height: 640px;
+              filter: drop-shadow(26px 34px 34px rgba(30, 42, 58, .28)); }
+  .note { position: absolute; left: 100px; bottom: 72px; font-size: 21px; color: #7a8494; }
+</style></head>
+<body>
+  <div class="text">
+    <img class="logo" src="kostal.svg" alt="KOSTAL">
+    <h1>PLENTICORE<span class="plus">plus</span></h1>
+    <div class="sub">QuickApp for FIBARO Home Center 3</div>
+    <div class="bar"></div>
+    <div class="features">PV · battery · grid · settings<br>local connection, no cloud</div>
+  </div>
+  <img class="inverter" src="inverter.png" alt="">
+  <div class="note">Independent project, not affiliated with KOSTAL Solar Electric GmbH.</div>
+</body></html>
