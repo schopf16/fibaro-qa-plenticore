@@ -83,6 +83,14 @@ end
 
 --- Called once by Boot.run with a valid configuration.
 function App.start(qa, cfg)
+  -- The login (SHA-256, AES-GCM) needs 64-bit integers; stop visibly on a Lua with smaller ones.
+  if math.maxinteger < 2 ^ 62 then
+    Log.error("This controller's Lua has integers up to %s; the inverter login needs 64-bit integers",
+      math.maxinteger)
+    Ui.setStatus("status.unsupportedPlatform")
+    return
+  end
+
   local lists, problems = App.parseLists(cfg)
   if not lists then
     local variables = {}

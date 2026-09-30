@@ -21,10 +21,17 @@ battery settings can be changed from scenes and other QuickApps.
 
 | | |
 |---|---|
-| Tested with | Fibaro Home Center 3, firmware 5.220.11; KOSTAL PLENTICORE plus 8.5 (G1), UI 01.30 |
-| Expected to work, untested | Home Center 3 Lite, Yubii Home; PLENTICORE plus G2, PLENTICORE BI, PLENTICORE G3, PIKO IQ |
+| Tested with | FIBARO Home Center 3, firmware 5.220.11, and KOSTAL PLENTICORE plus 8.5 (G1), UI 01.30 |
+| Not tested | All other controllers and inverters |
+| Not possible | Home Center 2 and Home Center Lite: they do not run Home Center 3 QuickApps |
 | Inverter access | IP address or host name and the **plant owner password** of the inverter's web interface |
 | Network access | Local network only |
+
+The login to the inverter computes SHA-256 and AES with 64-bit integers. On a
+controller whose Lua has smaller integers, the QuickApp stops with the status
+"Controller not supported" instead of computing wrong values. The inverter's
+own API description names PIKO IQ and PLENTICORE plus; other KOSTAL models
+may offer the same API, but this is not verified.
 
 ## Installation
 

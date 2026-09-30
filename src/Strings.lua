@@ -33,6 +33,12 @@ Strings = {
     fr = "Connexion refusée – veuillez vérifier le mot de passe",
     it = "Accesso rifiutato – verificare la password",
   },
+  ["status.unsupportedPlatform"] = {
+    en = "Controller not supported – 64-bit Lua required",
+    de = "Controller nicht unterstützt – 64-Bit-Lua erforderlich",
+    fr = "Contrôleur non pris en charge – Lua 64 bits requis",
+    it = "Controller non supportato – richiesto Lua a 64 bit",
+  },
   ["status.protocolError"] = {
     en = "Unexpected answer from the inverter – see the log",
     de = "Unerwartete Antwort des Wechselrichters – Details im Log",
