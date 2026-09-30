@@ -234,7 +234,7 @@ test("values are shown with unit, switches as on/off, time control as windows", 
   eq(Display.slots(string.rep("0", 96)), "-")
 end)
 
-test("the value list has one translated label per value", function()
+test("the value table has the name and the value with unit in separate labels", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("fr")
   local qa = FakeQA.new({})
@@ -245,18 +245,20 @@ test("the value list has one translated label per value", function()
   Display.set(Catalog.get("pvPower"), 500)
   Display.set(Catalog.get("batterySoc"), 80)
   Display.render()
-  eq(qa.views.lblValue1.text, "Puissance PV: 500 W")
-  eq(qa.views.lblValue2.text, "Charge batterie: 80 %")
-  eq(writes, 2)
+  eq({ qa.views.lblName1.text, qa.views.lblValue1.text }, { "Puissance PV", "500 W" })
+  eq({ qa.views.lblName2.text, qa.views.lblValue2.text }, { "Charge batterie", "80 %" })
+  eq(writes, 4)
   Display.render()
-  eq(writes, 2, "unchanged labels are not written again")
+  eq(writes, 4, "unchanged labels are not written again")
   Display.set(Catalog.get("pvPower"), 520)
   Display.render()
-  eq(writes, 3)
+  eq(writes, 5, "only the changed value label is written")
 end)
 
-local function row(name)
-  return { type = "horizontal", components = { { name = name, type = "label" } } }
+local function row(...)
+  local components = {}
+  for i, name in ipairs({ ... }) do components[i] = { name = name, type = "label" } end
+  return { type = "horizontal", components = components }
 end
 
 local function rowNames(rows)
@@ -265,13 +267,21 @@ local function rowNames(rows)
   return names
 end
 
-test("the layout gets exactly one value row per listed value", function()
+test("the layout gets exactly one table row per listed value", function()
   local base = { row("lblStatus"), row("btnRefresh") }
-  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblValue1", "lblValue2", "btnRefresh" })
+  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
   local current = Display.layout(base, 3)
+  eq(#current[2].components, 2)
   eq(Display.layout(current, 3), nil, "unchanged count: no new layout, no restart")
-  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblValue1", "btnRefresh" })
+  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblName1", "btnRefresh" })
   eq(rowNames(Display.layout(current, 0)), { "lblStatus", "btnRefresh" })
+end)
+
+test("rows of earlier layouts are replaced", function()
+  local oneLabel = { row("lblStatus"), row("lblValue1"), row("lblValue2"), row("btnRefresh") }
+  eq(rowNames(Display.layout(oneLabel, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
+  local threeLabels = { row("lblStatus"), row("lblName1", "lblValue1", "lblUnit1"), row("btnRefresh") }
+  ok(Display.layout(threeLabels, 1), "three-column rows are rebuilt")
 end)
 
 -- Children ---------------------------------------------------------------------
