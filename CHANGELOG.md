@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-30
+
 ### Added
 
 - Login to the inverter's local REST API as plant owner.
@@ -21,4 +23,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The QuickApp stops with "Controller not supported" on a Lua without
   64-bit integers, which the inverter login requires.
 
-[Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/commits/main
+[Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/schopf16/fibaro-qa-plenticore/releases/tag/v1.0.0
