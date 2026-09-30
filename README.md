@@ -10,6 +10,7 @@ battery settings can be changed from scenes and other QuickApps.
 ## Features
 
 - Measured values (power, energy, battery) as QuickApp variables
+- Value list in the QuickApp's user interface, in the controller's language
 - Inverter settings readable and writable, synchronised in both directions
 - Optional child devices with stable IDs, including energy meters for the energy panel
 - Login as plant owner: the password never leaves the HC3 in clear text
@@ -51,6 +52,23 @@ separated by commas; `none` means an empty list. An unknown name stops the
 QuickApp in the "not configured" state, and the log names it.
 
 Saving the variables restarts the QuickApp - this is how the HC3 applies them.
+
+## User interface
+
+The QuickApp shows a status line and one line per value listed in
+`readValues` and `writeValues`, with its name in the selected language and
+its unit, for example:
+
+```
+PV-Leistung: 3120 W
+Batterie-Ladestand: 64 %
+PV-Ertrag heute: 12.4 kWh
+Intelligente Batteriesteuerung: ein
+Zeitsteuerung Montag: 11:45-12:00 (2)
+```
+
+Switches show on/off; time control shows its time windows and the digit
+set for each window. **Refresh** reads all values at once.
 
 ## Reading values
 
@@ -192,6 +210,7 @@ not provide stay empty.
 one per quarter hour starting at 00:00. `0` means no restriction. KOSTAL does
 not document the other digits; set the desired time windows once in the
 inverter's web interface and read the resulting value before writing your own.
+The value list shows each window with its digit, e.g. `11:45-12:00 (2)`.
 
 ## Languages
 

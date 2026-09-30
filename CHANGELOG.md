@@ -15,5 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set` action and two-way synchronisation of settings; changes made on the
   inverter take precedence.
 - Optional child devices (`childValues`) with stable device IDs.
+- Value list in the user interface with names in English, German, French
+  and Italian, and units.
 
 [Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/commits/main
