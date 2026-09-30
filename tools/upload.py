@@ -2,7 +2,7 @@
 """Upload the sources to your development QuickApp on the HC3.
 
     python tools/upload.py            # upload changed files
-    python tools/upload.py --ui       # also replace the UI layout (labels, buttons)
+    python tools/upload.py --ui       # also replace the UI layout and the device icon
     python tools/upload.py --dry-run  # show what would change
 
 Configuration comes from ../.env and .env (both git-ignored):
@@ -83,11 +83,14 @@ def upload(dry_run: bool, ui: bool) -> None:
         layout = build_fqa(manifest, files)["initialProperties"]
         print("update UI layout")
         if not dry_run:
-            hc3.request("PUT", f"/api/devices/{qa_id}", {"properties": {
+            properties = {
                 "uiView": layout["uiView"],
                 "uiCallbacks": layout["uiCallbacks"],
                 "viewLayout": layout["viewLayout"],
-            }})
+            }
+            if "deviceIcon" in layout:
+                properties["deviceIcon"] = layout["deviceIcon"]
+            hc3.request("PUT", f"/api/devices/{qa_id}", {"properties": properties})
 
     verb = "would change" if dry_run else "changed"
     print(f"{verb} {changed} of {len(files)} files on QuickApp {qa_id}")
