@@ -10,7 +10,7 @@ battery settings can be changed from scenes and other QuickApps.
 ## Features
 
 - Measured values (power, energy, battery) as QuickApp variables
-- Value list in the QuickApp's user interface, in the controller's language
+- Value table in the QuickApp's user interface, in the controller's language
 - Inverter settings readable and writable, synchronised in both directions
 - Optional child devices with stable IDs, including energy meters for the energy panel
 - Login as plant owner: the password never leaves the HC3 in clear text
@@ -55,17 +55,20 @@ Saving the variables restarts the QuickApp - this is how the HC3 applies them.
 
 ## User interface
 
-The QuickApp shows a status line and one line per value listed in
-`readValues` and `writeValues`, with its name in the selected language and
-its unit, for example:
+The QuickApp shows a status line and a table with one row per value listed
+in `readValues` and `writeValues`: the name in the selected language, and
+the value with its unit, for example:
 
-```
-PV-Leistung: 3120 W
-Batterie-Ladestand: 64 %
-PV-Ertrag heute: 12.4 kWh
-Intelligente Batteriesteuerung: ein
-Zeitsteuerung Montag: 11:45-12:00 (2)
-```
+| | |
+|---|---|
+| PV-Leistung | 3120 W |
+| Batterie-Ladestand | 64 % |
+| PV-Ertrag heute | 12.4 kWh |
+| Intelligente Batteriesteuerung | ein |
+| Zeitsteuerung Montag | 11:45-12:00 (2) |
+
+The QuickApp adds or removes table rows itself when the lists change; it
+restarts once to show the new layout.
 
 Switches show on/off; time control shows its time windows and the digit
 set for each window. **Refresh** reads all values at once.

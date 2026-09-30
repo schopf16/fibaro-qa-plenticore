@@ -58,9 +58,13 @@ function Children.sync(quickApp, names)
 
   -- Removed from the list: delete our child, found by stored ID or by its key.
   local function remove(name, child)
-    api.delete("/devices/" .. tostring(child.id))
-    byId[child.id] = nil
-    Log.info("Deleted child %s for '%s' (removed from childValues)", child.id, name)
+    local _, status = api.delete("/devices/" .. tostring(child.id))
+    if math.type(status) == "integer" and status < 300 then
+      byId[child.id] = nil
+      Log.info("Deleted child %s for '%s' (removed from childValues)", child.id, name)
+    else
+      Log.error("Cannot delete child %s for '%s' (HTTP %s)", child.id, name, status)
+    end
   end
   for name, id in pairs(mapping) do
     if not wanted[name] then

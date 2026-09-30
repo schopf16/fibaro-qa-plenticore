@@ -277,6 +277,19 @@ test("the layout gets exactly one table row per listed value", function()
   eq(rowNames(Display.layout(current, 0)), { "lblStatus", "btnRefresh" })
 end)
 
+test("a rejected layout is reported and the QuickApp keeps running", function()
+  local qa = FakeQA.new({})
+  qa.id = 100
+  local savedGet, savedPut = api.get, api.put
+  api.get = function() return { properties = { uiView = { row("lblStatus"), row("btnRefresh") } } }, 200 end
+  api.put = function() return nil, 500 end
+  eq(Display.ensureLayout(qa, 2), false, "no restart is expected")
+  ok(logText():find("Cannot save the value table layout (HTTP 500)", 1, true), logText())
+  api.put = function() return {}, 200 end
+  eq(Display.ensureLayout(qa, 2), true)
+  api.get, api.put = savedGet, savedPut
+end)
+
 test("rows of earlier layouts are replaced", function()
   local oneLabel = { row("lblStatus"), row("lblValue1"), row("lblValue2"), row("btnRefresh") }
   eq(rowNames(Display.layout(oneLabel, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })

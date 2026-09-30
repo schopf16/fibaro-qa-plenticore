@@ -66,7 +66,7 @@ local function entriesOf(names, filter)
 end
 
 local function isProcess(entry) return entry.kind == "process" end
-local function isSetting(entry) return entry.kind ~= "process" end
+local function isFromSettings(entry) return entry.kind ~= "process" end -- settings and device information
 
 --- Names shown in the value list: readValues, then writeValues not already shown.
 local function displayNames(lists)
@@ -217,6 +217,7 @@ function App.poll()
   local query, entries = processQuery()
   state.client:processdata(query, function(err, processdata, kind)
     state.polling = false
+    if state.stopped then return end
     if err then return onFailure(err, kind, App.poll) end
     local values = {}
     for _, entry in ipairs(entries) do
@@ -358,7 +359,7 @@ function App.syncSettings()
   state.existingIds = App.Children.existingIds()
 
   local writeEntries = entriesOf(state.lists.write)
-  local readEntries  = entriesOf(state.lists.read, isSetting)
+  local readEntries  = entriesOf(state.lists.read, isFromSettings)
   local all = {}
   for _, entry in ipairs(writeEntries) do all[#all + 1] = entry end
   for _, entry in ipairs(readEntries) do all[#all + 1] = entry end
@@ -366,7 +367,12 @@ function App.syncSettings()
 
   state.client:settings(settingsQuery(all), function(err, remote, kind)
     if err then
-      Log.warn("Settings synchronisation failed: %s", err)
+      -- While the inverter is offline, polling already reports it.
+      if state.online == false then
+        Log.debug("Settings synchronisation failed: %s", err)
+      else
+        Log.warn("Settings synchronisation failed: %s", err)
+      end
       if kind == "auth" then stop(err) end
       return finishSync()
     end
