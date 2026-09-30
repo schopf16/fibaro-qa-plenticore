@@ -234,20 +234,34 @@ test("values are shown with unit, switches as on/off, time control as windows", 
   eq(Display.slots(string.rep("0", 96)), "-")
 end)
 
-test("the value list has one translated line per value and is only written when it changes", function()
+test("the value list has one translated label per value and hides the rest", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("fr")
   local qa = FakeQA.new({})
   local writes = 0
   local updateView = qa.updateView
   function qa:updateView(...) writes = writes + 1; return updateView(self, ...) end
-  Display.init(qa, { "pvPower", "batterySoc" })
+  Display.init(qa, { "pvPower", "batterySoc" }, 3)
   Display.set(Catalog.get("pvPower"), 500)
   Display.set(Catalog.get("batterySoc"), 80)
   Display.render()
+  eq(qa.views.lblValue1.text, "Puissance PV: 500 W")
+  eq(qa.views.lblValue2.text, "Charge batterie: 80 %")
+  eq(qa.views.lblValue3.visible, false)
+  local afterFirst = writes
   Display.render()
-  eq(qa.views.lblValues.text, "Puissance PV: 500 W<br>Charge batterie: 80 %")
-  eq(writes, 1)
+  eq(writes, afterFirst, "unchanged labels are not written again")
+  Display.set(Catalog.get("pvPower"), 520)
+  Display.render()
+  eq(writes, afterFirst + 1)
+end)
+
+test("the manifest has one value label per catalog entry", function()
+  local ids = {}
+  for _, row in ipairs(MANIFEST.ui) do
+    for _, element in ipairs(row) do ids[element.id] = true end
+  end
+  for i = 1, #Catalog.ALL do ok(ids["lblValue" .. i], "missing lblValue" .. i) end
 end)
 
 -- Children ---------------------------------------------------------------------

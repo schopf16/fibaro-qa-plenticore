@@ -207,9 +207,17 @@ not provide stay empty.
 
 `batteryTimeControl` switches time-controlled battery usage on or off.
 `batteryTimeControlMon` … `batteryTimeControlSun` hold 96 digits per weekday,
-one per quarter hour starting at 00:00. `0` means no restriction. KOSTAL does
-not document the other digits; set the desired time windows once in the
-inverter's web interface and read the resulting value before writing your own.
+one per quarter hour starting at 00:00:
+
+| Digit | Meaning |
+|---|---|
+| `0` | no restriction |
+| `2` | battery discharging blocked, charging from surplus allowed |
+| `1` | used by the web interface for its other blocking option (not verified) |
+
+KOSTAL does not document the digits; `2` was verified on a PLENTICORE plus G1.
+When in doubt, set the time windows once in the inverter's web interface and
+read the resulting value before writing your own.
 The value list shows each window with its digit, e.g. `11:45-12:00 (2)`.
 
 ## Languages

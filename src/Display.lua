@@ -1,18 +1,23 @@
 -- Display: one line per listed value in the QuickApp's user interface, with
--- the name in the selected language and the unit.
+-- the name in the selected language and the unit. The HC3 shows a label on a
+-- single line, so every value has its own label (lblValue1, lblValue2, ...);
+-- labels without a value are hidden.
 
 App.Display = {}
 local Display = App.Display
 
-local LABEL = "lblValues"
+local qa      = nil
+local names   = {} -- names in display order
+local texts   = {} -- name -> formatted value
+local shown   = {} -- label id -> text currently shown
+local labels  = 0  -- number of value labels in the UI
 
-local qa     = nil
-local names  = {}  -- names in display order
-local texts  = {}  -- name -> formatted value
-local shown  = nil -- text currently in the label
-
-function Display.init(quickApp, list)
-  qa, names, texts, shown = quickApp, list, {}, nil
+--- labelCount: number of lblValue labels in the manifest (one per catalog entry).
+function Display.init(quickApp, list, labelCount)
+  qa, names, texts, shown, labels = quickApp, list, {}, {}, labelCount
+  if #names > labels then
+    Log.warn("Only %s of %s listed values fit into the value list", labels, #names)
+  end
 end
 
 local function clock(quarter)
@@ -47,16 +52,24 @@ function Display.set(entry, value)
   texts[entry.name] = Display.format(entry, value)
 end
 
---- Write the label if its text changed.
+local function show(id, text)
+  if shown[id] == text then return end
+  local first = shown[id] == nil
+  shown[id] = text
+  local ok, err = pcall(function()
+    if first then qa:updateView(id, "visible", text ~= false) end
+    if text then qa:updateView(id, "text", text) end
+  end)
+  if not ok then Log.warn("Cannot update UI element '%s': %s", id, err) end
+end
+
+--- Write the labels whose text changed; hide the unused ones once.
 function Display.render()
-  if not qa or #names == 0 then return end
-  local lines = {}
-  for i, name in ipairs(names) do
-    lines[i] = I18n.t("value." .. name) .. ": " .. Util.escapeHtml(texts[name] or "-")
+  if not qa then return end
+  for i = 1, labels do
+    local name = names[i]
+    local text = false
+    if name then text = I18n.t("value." .. name) .. ": " .. (texts[name] or "-") end
+    show("lblValue" .. i, text)
   end
-  local text = table.concat(lines, "<br>")
-  if text == shown then return end
-  shown = text
-  local ok, err = pcall(qa.updateView, qa, LABEL, "text", text)
-  if not ok then Log.warn("Cannot update the value list: %s", err) end
 end
