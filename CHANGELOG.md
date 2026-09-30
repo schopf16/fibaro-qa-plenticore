@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial project structure.
+- Login to the inverter's local REST API as plant owner.
+- Process data, settings and device information as QuickApp variables,
+  selected with `readValues` and `writeValues`.
+- `set` action and two-way synchronisation of settings; changes made on the
+  inverter take precedence.
+- Optional child devices (`childValues`) with stable device IDs.
 
 [Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/commits/main

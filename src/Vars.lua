@@ -65,6 +65,7 @@ function Vars.removeUnlisted(keep)
     end
   end
   if #removed == 0 then return end
+  -- Saving the variable list restarts the QuickApp, so log first.
+  Log.info("Removing variables no longer listed: %s", Util.join(removed))
   api.put("/devices/" .. tostring(qa.id), { properties = { quickAppVariables = kept } })
-  Log.info("Removed variables no longer listed: %s", Util.join(removed))
 end
