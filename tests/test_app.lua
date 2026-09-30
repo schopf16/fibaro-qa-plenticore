@@ -234,34 +234,44 @@ test("values are shown with unit, switches as on/off, time control as windows", 
   eq(Display.slots(string.rep("0", 96)), "-")
 end)
 
-test("the value list has one translated label per value and hides the rest", function()
+test("the value list has one translated label per value", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("fr")
   local qa = FakeQA.new({})
   local writes = 0
   local updateView = qa.updateView
   function qa:updateView(...) writes = writes + 1; return updateView(self, ...) end
-  Display.init(qa, { "pvPower", "batterySoc" }, 3)
+  Display.init(qa, { "pvPower", "batterySoc" })
   Display.set(Catalog.get("pvPower"), 500)
   Display.set(Catalog.get("batterySoc"), 80)
   Display.render()
   eq(qa.views.lblValue1.text, "Puissance PV: 500 W")
   eq(qa.views.lblValue2.text, "Charge batterie: 80 %")
-  eq(qa.views.lblValue3.visible, false)
-  local afterFirst = writes
+  eq(writes, 2)
   Display.render()
-  eq(writes, afterFirst, "unchanged labels are not written again")
+  eq(writes, 2, "unchanged labels are not written again")
   Display.set(Catalog.get("pvPower"), 520)
   Display.render()
-  eq(writes, afterFirst + 1)
+  eq(writes, 3)
 end)
 
-test("the manifest has one value label per catalog entry", function()
-  local ids = {}
-  for _, row in ipairs(MANIFEST.ui) do
-    for _, element in ipairs(row) do ids[element.id] = true end
-  end
-  for i = 1, #Catalog.ALL do ok(ids["lblValue" .. i], "missing lblValue" .. i) end
+local function row(name)
+  return { type = "horizontal", components = { { name = name, type = "label" } } }
+end
+
+local function rowNames(rows)
+  local names = {}
+  for i, r in ipairs(rows) do names[i] = r.components[1].name end
+  return names
+end
+
+test("the layout gets exactly one value row per listed value", function()
+  local base = { row("lblStatus"), row("btnRefresh") }
+  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblValue1", "lblValue2", "btnRefresh" })
+  local current = Display.layout(base, 3)
+  eq(Display.layout(current, 3), nil, "unchanged count: no new layout, no restart")
+  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblValue1", "btnRefresh" })
+  eq(rowNames(Display.layout(current, 0)), { "lblStatus", "btnRefresh" })
 end)
 
 -- Children ---------------------------------------------------------------------

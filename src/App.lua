@@ -105,6 +105,9 @@ function App.start(qa, cfg)
   for _, name in ipairs(lists.read) do state.readSet[name] = true end
   for _, name in ipairs(lists.write) do state.writeSet[name] = true end
 
+  local shownNames = displayNames(lists)
+  if App.Display.ensureLayout(qa, #shownNames) then return end
+
   App.Store.init(qa)
   App.Sync.init()
   App.Vars.init(qa)
@@ -113,7 +116,7 @@ function App.start(qa, cfg)
   for name in pairs(state.writeSet) do keep[name] = true end
   App.Vars.removeUnlisted(keep)
   App.Children.sync(qa, lists.children)
-  App.Display.init(qa, displayNames(lists), #App.Catalog.ALL)
+  App.Display.init(qa, shownNames)
   Log.info("Reading %s value(s), synchronising %s setting(s), %s child device(s)",
     #lists.read, #lists.write, #lists.children)
 
