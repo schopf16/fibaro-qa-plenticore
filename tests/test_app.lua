@@ -15,7 +15,8 @@ end)
 test("PBKDF2 matches the reference, also when computed in slices", function()
   local expected = "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"
   eq(C.hex(C.pbkdf2("password", "salt", 4096)), expected)
-  local step, result = C.pbkdf2Stepper("password", "salt", 4096), nil
+  local step = C.pbkdf2Stepper("password", "salt", 4096)
+  local result
   repeat result = step(333) until result
   eq(C.hex(result), expected)
 end)
@@ -160,7 +161,8 @@ test("lists accept only allowed names", function()
   names, invalid = Catalog.parseList("batteryMinSoc, pvPower", Catalog.writable)
   eq(names, { "batteryMinSoc" })
   eq(invalid, { "pvPower" })
-  _, invalid = Catalog.parseList("inverterState", Catalog.childCapable)
+  names, invalid = Catalog.parseList("inverterState", Catalog.childCapable)
+  eq(names, {})
   eq(invalid, { "inverterState" }, "text values cannot be children")
 end)
 
