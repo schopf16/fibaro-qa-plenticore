@@ -1,0 +1,12 @@
+# Changes here will be overwritten by copier. Do not edit by hand.
+_commit: 243e8a4
+_src_path: gh:schopf16/fibaro-qa-template
+copyright_year: 2026
+description: Monitors and controls KOSTAL PLENTICORE and PIKO IQ inverters through
+    their local REST API.
+device_type: com.fibaro.deviceController
+internet_access: false
+log_tag: Plenticore
+qa_name: KOSTAL PLENTICORE
+slug: plenticore
+tested_firmware: 5.220.11
