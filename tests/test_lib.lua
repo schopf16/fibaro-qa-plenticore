@@ -6,6 +6,11 @@ test("Util.escapeHtml neutralises markup", function()
   eq(Util.escapeHtml('<b a="x">&'), "&lt;b a=&quot;x&quot;&gt;&amp;")
 end)
 
+test("Util.toAscii keeps the meaning of accented and typographic characters", function()
+  eq(Util.toAscii("Batterie prüfen – Réseau … 20 °C · «ok» ½"), 'Batterie pruefen - Reseau ... 20  degC | "ok" ?')
+  eq(Util.toAscii("plain ASCII"), "plain ASCII")
+end)
+
 test("Util.replaceAll treats the needle literally", function()
   eq(Util.replaceAll("a.b%c.d", ".b%", "!"), "a!c.d")
   eq(Util.replaceAll("abc", "b", "%1"), "a%1c")
@@ -241,7 +246,7 @@ test("Boot stops visibly when the configuration is invalid", function()
   eq(Boot.run(qa, fakeApp()), false)
   eq(STARTED, nil)
   ok(qa.properties.log:find("host", 1, true), qa.properties.log)
-  eq(qa.views.lblStatus.text, qa.properties.log)
+  eq(Util.toAscii(qa.views.lblStatus.text), qa.properties.log)
 end)
 
 test("Boot redacts secrets from the very first log line", function()
@@ -252,12 +257,21 @@ test("Boot redacts secrets from the very first log line", function()
   ok(not logText():find("topsecret", 1, true), logText())
 end)
 
+test("the status line is ASCII while the label keeps the full text", function()
+  API["/settings/info"] = { defaultLanguage = "de" }
+  local qa = FakeQA.new({ host = "" })
+  Boot.run(qa, fakeApp())
+  ok(not qa.properties.log:find("[\128-\255]"), qa.properties.log)
+  ok(qa.properties.log:find("pruefen", 1, true), qa.properties.log)
+  ok(qa.views.lblStatus.text:find("prüfen", 1, true), qa.views.lblStatus.text)
+end)
+
 test("Boot follows the controller language", function()
   API["/settings/info"] = { defaultLanguage = "de" }
   local qa = FakeQA.new({ host = "192.0.2.1" })
   Boot.run(qa, fakeApp())
   eq(I18n.language(), "de")
-  eq(qa.properties.log, LibStrings["lib.status.starting"].de)
+  eq(qa.properties.log, Util.toAscii(LibStrings["lib.status.starting"].de))
 end)
 
 test("Boot logs what a maintainer needs to read a user's log", function()
