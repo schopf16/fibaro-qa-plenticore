@@ -273,3 +273,7 @@ cannot lock the account.
 ## License
 
 [MIT](LICENSE)
+
+This is an independent project, not affiliated with or endorsed by KOSTAL
+Solar Electric GmbH or FIBARO. KOSTAL, PLENTICORE and PIKO IQ are trademarks
+of their respective owners and are used here only to name the supported devices.
