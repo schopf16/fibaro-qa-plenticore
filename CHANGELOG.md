@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-01
+
 ### Added
 
 - Switches and sliders in the user interface for settings listed in
@@ -92,5 +94,6 @@ network.
 - The QuickApp stops with "Controller not supported" on a Lua without
   64-bit integers, which the inverter login requires.
 
-[Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/schopf16/fibaro-qa-plenticore/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/schopf16/fibaro-qa-plenticore/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/schopf16/fibaro-qa-plenticore/releases/tag/v1.0.0
