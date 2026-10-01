@@ -1,86 +1,167 @@
 -- Display: the listed values as a table in the QuickApp's user interface.
 --
--- The HC3 shows a label on a single line, so every value has its own row of
--- two labels: the name in the selected language, and the value with its unit.
--- The HC3 gives all labels of a row the same width and ignores weight and
--- alignment, so two columns keep the names from wrapping. The QuickApp adds or
--- removes these rows itself when the lists change; saving the new layout
--- restarts it once.
+-- The HC3 shows a label on a single line, gives all elements of a row the same
+-- width and ignores alignment, so every value has its own row: the name in
+-- the selected language, and the value with its unit. A writable switch
+-- setting shows a switch instead of the value; a writable setting with a range
+-- gets a slider row below its value. The QuickApp adds or removes these rows
+-- itself when the lists change; saving the new layout restarts it once.
 
 App.Display = {}
 local Display = App.Display
 
--- One column per label in a value row: id prefix and share of the width.
-local COLUMNS = {
-  { prefix = "lblName",  weight = "0.50" },
-  { prefix = "lblValue", weight = "0.50" },
-}
+local NAME, VALUE, SWITCH, SLIDER = "lblName", "lblValue", "swValue", "sldValue"
+local EVENTS = { switch = "onToggled", slider = "onChanged" }
 
-local qa    = nil
-local names = {} -- names in display order
-local texts = {} -- name -> value with unit
-local shown = {} -- label id -> text currently shown
+local qa       = nil
+local rows     = {} -- { name, control } in display order
+local texts    = {} -- name -> value text with unit
+local raw      = {} -- name -> value, for the controls
+local shown    = {} -- "id.property" -> content currently shown
+local onChange = nil
 
--- A row of this QuickApp's value table (current or earlier layout).
-local function isValueRow(row)
-  local first = type(row) == "table" and type(row.components) == "table" and row.components[1]
-  local name  = type(first) == "table" and type(first.name) == "string" and first.name or ""
-  return name:find("^lblName%d+$") ~= nil or name:find("^lblValue%d+$") ~= nil
+-- Elements -----------------------------------------------------------------------
+
+local function label(id)
+  return { name = id, text = "", type = "label", style = { weight = "0.50" } }
 end
 
-local function isCurrentRow(row)
-  return #row.components == #COLUMNS and row.components[1].name:find("^lblName%d+$") ~= nil
+local function binding(event, id)
+  return { [event] = { { type = "deviceAction",
+    params = { actionName = "UIAction", args = { event, id, "$event.value" } } } } }
 end
 
-local function valueRow(index)
-  local components = {}
-  for i, column in ipairs(COLUMNS) do
-    components[i] = {
-      name  = column.prefix .. index,
-      text  = "",
-      type  = "label",
-      style = { weight = column.weight },
-    }
-  end
+local function switch(id)
+  return { name = id, type = "switch", value = "false", style = { weight = "0.50" },
+           eventBinding = binding(EVENTS.switch, id) }
+end
+
+local function slider(id, control)
+  return { name = id, type = "slider", text = "", value = tostring(control.min), style = { weight = "1.0" },
+           min = tostring(control.min), max = tostring(control.max), step = tostring(control.step or 1),
+           eventBinding = binding(EVENTS.slider, id) }
+end
+
+local function row(components)
   return { type = "horizontal", style = { weight = "1.0" }, components = components }
 end
 
---- The UI rows with exactly `count` value rows after lblStatus, or nil if
--- uiView already has them in the current layout.
-function Display.layout(uiView, count)
-  local rows, existing, current, insertAt = {}, 0, true, 1
-  for _, row in ipairs(uiView) do
-    if isValueRow(row) then
-      existing = existing + 1
-      current  = current and isCurrentRow(row)
-    else
-      rows[#rows + 1] = row
-      local first = row.components and row.components[1]
-      if first and first.name == "lblStatus" then insertAt = #rows + 1 end
-    end
-  end
-  if existing == count and current then return nil end
-  for i = count, 1, -1 do table.insert(rows, insertAt, valueRow(i)) end
-  return rows
+-- The id of the control of value row i, and its event; nil for plain values.
+local function controlOf(item, i)
+  local kind = item.control and item.control.type
+  if kind == "switch" then return SWITCH .. i, EVENTS.switch end
+  if kind == "slider" then return SLIDER .. i, EVENTS.slider end
+  return nil
 end
 
---- Make the UI have one value row per listed value. Returns true if the
--- layout was saved, which restarts the QuickApp.
-function Display.ensureLayout(quickApp, count)
+local function callbackName(id, event)
+  return "ui" .. id .. event:sub(1, 1):upper() .. event:sub(2)
+end
+
+--- The rows of the value table for `spec` ({ name, control } per value).
+function Display.tableRows(spec)
+  local result = {}
+  for i, item in ipairs(spec) do
+    local kind = item.control and item.control.type
+    if kind == "switch" then
+      result[#result + 1] = row({ label(NAME .. i), switch(SWITCH .. i) })
+    else
+      result[#result + 1] = row({ label(NAME .. i), label(VALUE .. i) })
+      if kind == "slider" then result[#result + 1] = row({ slider(SLIDER .. i, item.control) }) end
+    end
+  end
+  return result
+end
+
+-- Layout -------------------------------------------------------------------------
+
+local function isTableRow(r)
+  local first = type(r) == "table" and type(r.components) == "table" and r.components[1]
+  local name  = type(first) == "table" and type(first.name) == "string" and first.name or ""
+  for _, prefix in ipairs({ NAME, VALUE, SLIDER }) do
+    if name:find("^" .. prefix .. "%d+$") then return true end
+  end
+  return false
+end
+
+-- Names and types of the elements, to compare an existing table with the wanted one.
+local function signature(list)
+  local parts = {}
+  for _, r in ipairs(list) do
+    for _, c in ipairs(r.components or {}) do parts[#parts + 1] = tostring(c.name) .. ":" .. tostring(c.type) end
+    parts[#parts + 1] = "|"
+  end
+  return table.concat(parts, ",")
+end
+
+--- The UI rows with the value table for `spec` after lblStatus, or nil if
+-- uiView already has exactly this table.
+function Display.layout(uiView, spec)
+  local wanted = Display.tableRows(spec)
+  local others, existing, insertAt = {}, {}, 1
+  for _, r in ipairs(uiView) do
+    if isTableRow(r) then
+      existing[#existing + 1] = r
+    else
+      others[#others + 1] = r
+      local first = r.components and r.components[1]
+      if first and first.name == "lblStatus" then insertAt = #others + 1 end
+    end
+  end
+  if signature(existing) == signature(wanted) then return nil end
+  for i = #wanted, 1, -1 do table.insert(others, insertAt, wanted[i]) end
+  return others
+end
+
+--- UI callbacks: the existing ones except those of the value table, plus one
+-- per switch and slider.
+function Display.callbacks(existing, spec)
+  local result = {}
+  for _, c in ipairs(existing or {}) do
+    local name = type(c.name) == "string" and c.name or ""
+    if not (name:find("^" .. SWITCH .. "%d+$") or name:find("^" .. SLIDER .. "%d+$")) then
+      result[#result + 1] = c
+    end
+  end
+  for i, item in ipairs(spec) do
+    local id, event = controlOf(item, i)
+    if id then result[#result + 1] = { name = id, eventType = event, callback = callbackName(id, event) } end
+  end
+  return result
+end
+
+--- Make the UI have the value table for `spec`. Returns true if the layout
+-- was saved, which restarts the QuickApp.
+function Display.ensureLayout(quickApp, spec)
   local device = api.get("/devices/" .. tostring(quickApp.id))
-  local uiView = device and device.properties and device.properties.uiView
-  if type(uiView) ~= "table" then return false end
-  local rows = Display.layout(uiView, count)
-  if not rows then return false end
-  Log.info("Rebuilding the value table for %s value(s); the QuickApp restarts", count)
-  local _, status = api.put("/devices/" .. tostring(quickApp.id), { properties = { uiView = rows } })
+  local props  = device and device.properties
+  if type(props) ~= "table" or type(props.uiView) ~= "table" then return false end
+  local layout = Display.layout(props.uiView, spec)
+  if not layout then return false end
+  Log.info("Rebuilding the value table for %s value(s); the QuickApp restarts", #spec)
+  local body = { properties = { uiView = layout, uiCallbacks = Display.callbacks(props.uiCallbacks, spec) } }
+  local _, status = api.put("/devices/" .. tostring(quickApp.id), body)
   if math.type(status) == "integer" and status < 300 then return true end
   Log.error("Cannot save the value table layout (HTTP %s); values are not shown", status)
   return false
 end
 
-function Display.init(quickApp, list)
-  qa, names, texts, shown = quickApp, list, {}, {}
+-- Values -------------------------------------------------------------------------
+
+--- spec: { name, control } per value. changed(name, value) is called when the
+-- user moves a slider or flips a switch.
+function Display.init(quickApp, spec, changed)
+  qa, rows, texts, raw, shown, onChange = quickApp, spec, {}, {}, {}, changed
+  for i, item in ipairs(spec) do
+    local id, event = controlOf(item, i)
+    if id then
+      -- The HC3 calls ui<id><Event> on the QuickApp; every call is protected.
+      QuickApp[callbackName(id, event)] = function(_, uiEvent)
+        local value = type(uiEvent) == "table" and type(uiEvent.values) == "table" and uiEvent.values[1]
+        Safe.call(id, onChange, item.name, value)
+      end
+    end
+  end
 end
 
 local function clock(quarter)
@@ -113,20 +194,29 @@ end
 
 function Display.set(entry, value)
   texts[entry.name] = Display.format(entry, value)
+  raw[entry.name]   = value
 end
 
-local function show(id, text)
-  if shown[id] == text then return end
-  shown[id] = text
-  local ok, err = pcall(qa.updateView, qa, id, "text", text)
+local function update(id, property, value)
+  local key = id .. "." .. property
+  if shown[key] == value then return end
+  shown[key] = value
+  local ok, err = pcall(qa.updateView, qa, id, property, value)
   if not ok then Log.warn("Cannot update UI element '%s': %s", id, err) end
 end
 
---- Write the labels whose text changed.
+--- Write the elements whose content changed.
 function Display.render()
   if not qa then return end
-  for i, name in ipairs(names) do
-    show(COLUMNS[1].prefix .. i, I18n.t("value." .. name))
-    show(COLUMNS[2].prefix .. i, texts[name] or "-")
+  for i, item in ipairs(rows) do
+    local kind  = item.control and item.control.type
+    local value = raw[item.name]
+    update(NAME .. i, "text", I18n.t("value." .. item.name))
+    if kind == "switch" then
+      if value ~= nil then update(SWITCH .. i, "value", tostring(value) == "1" and "true" or "false") end
+    else
+      update(VALUE .. i, "text", texts[item.name] or "-")
+      if kind == "slider" and value ~= nil then update(SLIDER .. i, "value", tostring(value)) end
+    end
   end
 end

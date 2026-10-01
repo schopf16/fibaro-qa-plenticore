@@ -1,6 +1,6 @@
 -- Tests for the Plenticore QuickApp. Run with: python tools/run_tests.py
 -- AES-GCM is verified byte for byte by the login test (payload and tag).
--- luacheck: globals QuickAppChild
+-- luacheck: globals QuickAppChild QuickApp
 
 -- Crypto -------------------------------------------------------------------
 
@@ -198,23 +198,14 @@ end)
 
 local Sync = App.Sync
 
-test("three-way decision table", function()
-  eq(Sync.decide("20", "20", "20"), "none")
-  eq(Sync.decide("30", "20", "20"), "write", "changed locally")
-  eq(Sync.decide("20", "40", "20"), "adopt", "changed on the inverter")
-  eq(Sync.decide("30", "40", "20"), "conflict", "both changed: inverter wins")
-  eq(Sync.decide("40", "40", "20"), "adopt", "both changed to the same value")
-  eq(Sync.decide("", "40", "20"), "adopt", "empty variable")
-  eq(Sync.decide("30", "40", nil), "adopt", "first run takes the inverter's value")
-  eq(Sync.decide("30", nil, "20"), "none", "inverter value unknown")
-end)
-
 test("settings are normalized and validated against the inverter's limits", function()
   local minSoc = Catalog.get("batteryMinSoc")
   eq(Sync.normalize(minSoc, "50.0"), "50")
   eq(Sync.normalize(Catalog.get("activePowerLimitation"), "8499.9990234375"), "8499.999")
+  eq(Sync.normalize(Catalog.get("batterySmartControl"), true), "1", "a switch sends true/false")
   local meta = { type = "byte", min = 5, max = 100 }
   eq(Sync.validate(minSoc, "30", meta), "30")
+  eq(Sync.validate(minSoc, 30, meta), "30")
   eq(select(2, Sync.validate(minSoc, "150", meta)), "must be between 5 and 100")
   eq(select(2, Sync.validate(minSoc, "12.5", meta)), "must be a whole number")
   eq(select(2, Sync.validate(minSoc, "abc", meta)), "is not a number")
@@ -222,11 +213,79 @@ test("settings are normalized and validated against the inverter's limits", func
   eq(Sync.validate(slots, string.rep("0", 96)), string.rep("0", 96))
   ok(select(2, Sync.validate(slots, string.rep("0", 95))))
   ok(select(2, Sync.validate(slots, string.rep("3", 96))))
+  eq(Sync.publishable(minSoc, "30"), 30)
+  eq(Sync.publishable(slots, string.rep("0", 96)), string.rep("0", 96))
+end)
+
+-- Options and lists --------------------------------------------------------------
+
+test("options in the code are validated with clear messages", function()
+  local schema = Config.merge(Config.OPTIONS, App.OPTION_SCHEMA)
+  local options, problems = Config.loadOptions(schema, App.OPTIONS)
+  eq(#problems, 0)
+  eq(options.pollIntervalSec, 10)
+  eq(options.deadband, true)
+  options, problems = Config.loadOptions(schema, { pollIntervalSec = 2, deadband = "maybe" })
+  eq(options.pollIntervalSec, 10)
+  eq(options.deadband, true)
+  eq(problems[1].reason, "must be between 5 and 3600")
+  eq(problems[2].reason, "must be true or false")
+end)
+
+test("the value table lists readValues, then writeValues, with controls for writable settings", function()
+  local lists = { read = { "pvPower", "batteryMinSoc" }, write = { "batteryMinSoc", "batterySmartControl",
+    "batteryTimeControlMon" }, children = {} }
+  local spec = App.tableSpec(lists)
+  eq(#spec, 4)
+  eq(spec[1], { name = "pvPower" })
+  eq(spec[2].control.type, "slider", "listed in both: shown once, with its control")
+  eq(spec[3].control.type, "switch")
+  eq(spec[4].control, nil, "time control has no control")
+  local readOnly = App.tableSpec({ read = { "batterySmartControl" }, write = {}, children = {} })
+  eq(readOnly[1].control, nil, "read-only settings get no control")
+end)
+
+-- Values ---------------------------------------------------------------------------
+
+local function valuesQA()
+  local qa = FakeQA.new({})
+  qa.id = 100
+  return qa
+end
+
+test("all values are published in one JSON variable, only when they change", function()
+  local qa = valuesQA()
+  local writes = 0
+  local setVariable = qa.setVariable
+  function qa:setVariable(...) writes = writes + 1; return setVariable(self, ...) end
+  App.Values.init(qa, true)
+  App.Values.set(Catalog.get("pvPower"), 1000)
+  App.Values.set(Catalog.get("batterySoc"), 50)
+  App.Values.flush()
+  eq(json.decode(qa.variables.values), { pvPower = 1000, batterySoc = 50 })
+  App.Values.set(Catalog.get("pvPower"), 1005)
+  App.Values.flush()
+  eq(writes, 1, "5 W is inside the dead band")
+  App.Values.set(Catalog.get("pvPower"), 1020)
+  App.Values.flush()
+  eq(writes, 2)
+  eq(json.decode(qa.variables.values).pvPower, 1020)
+end)
+
+test("without dead band every change is published", function()
+  local qa = valuesQA()
+  App.Values.init(qa, false)
+  App.Values.set(Catalog.get("pvPower"), 1000)
+  App.Values.flush()
+  App.Values.set(Catalog.get("pvPower"), 1001)
+  App.Values.flush()
+  eq(json.decode(qa.variables.values).pvPower, 1001)
 end)
 
 -- Display --------------------------------------------------------------------
 
 local Display = App.Display
+QuickApp = QuickApp or {} -- main.lua is not loaded in the tests
 
 test("every value has a name in all four languages", function()
   for _, entry in ipairs(Catalog.ALL) do
@@ -250,25 +309,41 @@ test("values are shown with unit, switches as on/off, time control as windows", 
   eq(Display.slots(string.rep("0", 96)), "-")
 end)
 
-test("the value table has the name and the value with unit in separate labels", function()
+local SLIDER = { type = "slider", min = 5, max = 100, step = 1 }
+
+test("the value table shows names, values, switches and sliders", function()
   I18n.register(App.STRINGS)
   I18n.setLanguage("fr")
   local qa = FakeQA.new({})
   local writes = 0
   local updateView = qa.updateView
   function qa:updateView(...) writes = writes + 1; return updateView(self, ...) end
-  Display.init(qa, { "pvPower", "batterySoc" })
+  local spec = { { name = "pvPower" }, { name = "batterySmartControl", control = { type = "switch" } },
+                 { name = "batteryMinSoc", control = SLIDER } }
+  Display.init(qa, spec, function() end)
   Display.set(Catalog.get("pvPower"), 500)
-  Display.set(Catalog.get("batterySoc"), 80)
+  Display.set(Catalog.get("batterySmartControl"), 1)
+  Display.set(Catalog.get("batteryMinSoc"), 30)
   Display.render()
   eq({ qa.views.lblName1.text, qa.views.lblValue1.text }, { "Puissance PV", "500 W" })
-  eq({ qa.views.lblName2.text, qa.views.lblValue2.text }, { "Charge batterie", "80 %" })
-  eq(writes, 4)
+  eq(qa.views.swValue2.value, "true")
+  eq({ qa.views.lblValue3.text, qa.views.sldValue3.value }, { "30 %", "30" })
+  local first = writes
   Display.render()
-  eq(writes, 4, "unchanged labels are not written again")
+  eq(writes, first, "unchanged elements are not written again")
   Display.set(Catalog.get("pvPower"), 520)
   Display.render()
-  eq(writes, 5, "only the changed value label is written")
+  eq(writes, first + 1, "only the changed value label is written")
+end)
+
+test("moving a slider or flipping a switch calls the handler with the setting and value", function()
+  local calls = {}
+  local spec = { { name = "batterySmartControl", control = { type = "switch" } },
+                 { name = "batteryMinSoc", control = SLIDER } }
+  Display.init(FakeQA.new({}), spec, function(name, value) calls[#calls + 1] = { name, value } end)
+  QuickApp.uiswValue1OnToggled(nil, { elementName = "swValue1", values = { true } })
+  QuickApp.uisldValue2OnChanged(nil, { elementName = "sldValue2", values = { 40 } })
+  eq(calls, { { "batterySmartControl", true }, { "batteryMinSoc", 40 } })
 end)
 
 local function row(...)
@@ -283,14 +358,23 @@ local function rowNames(rows)
   return names
 end
 
-test("the layout gets exactly one table row per listed value", function()
+test("the layout has one row per value, a switch beside its name and a slider row below", function()
   local base = { row("lblStatus"), row("btnRefresh") }
-  eq(rowNames(Display.layout(base, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
-  local current = Display.layout(base, 3)
-  eq(#current[2].components, 2)
-  eq(Display.layout(current, 3), nil, "unchanged count: no new layout, no restart")
-  eq(rowNames(Display.layout(current, 1)), { "lblStatus", "lblName1", "btnRefresh" })
-  eq(rowNames(Display.layout(current, 0)), { "lblStatus", "btnRefresh" })
+  local spec = { { name = "pvPower" }, { name = "batterySmartControl", control = { type = "switch" } },
+                 { name = "batteryMinSoc", control = SLIDER } }
+  local rows = Display.layout(base, spec)
+  eq(rowNames(rows), { "lblStatus", "lblName1", "lblName2", "lblName3", "sldValue3", "btnRefresh" })
+  eq(rows[3].components[2].type, "switch")
+  eq({ rows[5].components[1].min, rows[5].components[1].max }, { "5", "100" })
+  eq(Display.layout(rows, spec), nil, "unchanged table: no new layout, no restart")
+  eq(rowNames(Display.layout(rows, { { name = "pvPower" } })), { "lblStatus", "lblName1", "btnRefresh" })
+  local callbacks = Display.callbacks({ { name = "btnRefresh", eventType = "onReleased", callback = "x" },
+                                        { name = "sldValue9", eventType = "onChanged", callback = "y" } }, spec)
+  eq(callbacks, {
+    { name = "btnRefresh", eventType = "onReleased", callback = "x" },
+    { name = "swValue2",   eventType = "onToggled",  callback = "uiswValue2OnToggled" },
+    { name = "sldValue3",  eventType = "onChanged",  callback = "uisldValue3OnChanged" },
+  })
 end)
 
 test("a rejected layout is reported and the QuickApp keeps running", function()
@@ -299,18 +383,17 @@ test("a rejected layout is reported and the QuickApp keeps running", function()
   local savedGet, savedPut = api.get, api.put
   api.get = function() return { properties = { uiView = { row("lblStatus"), row("btnRefresh") } } }, 200 end
   api.put = function() return nil, 500 end
-  eq(Display.ensureLayout(qa, 2), false, "no restart is expected")
+  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), false, "no restart is expected")
   ok(logText():find("Cannot save the value table layout (HTTP 500)", 1, true), logText())
   api.put = function() return {}, 200 end
-  eq(Display.ensureLayout(qa, 2), true)
+  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), true)
   api.get, api.put = savedGet, savedPut
 end)
 
 test("rows of earlier layouts are replaced", function()
   local oneLabel = { row("lblStatus"), row("lblValue1"), row("lblValue2"), row("btnRefresh") }
-  eq(rowNames(Display.layout(oneLabel, 2)), { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
-  local threeLabels = { row("lblStatus"), row("lblName1", "lblValue1", "lblUnit1"), row("btnRefresh") }
-  ok(Display.layout(threeLabels, 1), "three-column rows are rebuilt")
+  eq(rowNames(Display.layout(oneLabel, { { name = "pvPower" }, { name = "homePower" } })),
+    { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
 end)
 
 -- Children ---------------------------------------------------------------------
@@ -445,7 +528,7 @@ test("foreign children are never touched", function()
   ok(DEVICES[150] and DEVICES[151])
 end)
 
-test("removing variables keeps configuration and restores masked passwords", function()
+test("variables of version 1.0.0 are removed and the password is kept", function()
   controller()
   local qa = restart()
   qa.variables["password"] = "stored-value"
@@ -453,15 +536,16 @@ test("removing variables keeps configuration and restores masked passwords", fun
     { name = "host", type = "string", value = "192.0.2.5" },
     { name = "password", type = "password", value = "****" },
     { name = "pvPower", type = "string", value = "1000" },
-    { name = "batterySoc", type = "string", value = "50" },
+    { name = "logLevel", type = "string", value = "info" },
+    { name = "values", type = "string", value = "{}" },
   } }
   api.get = function(path) if path == "/devices/100" then return DEVICES[100], 200 end end
   local written
   api.put = function(_, body) written = body.properties.quickAppVariables; return {}, 200 end
-  App.Vars.init(qa)
-  App.Vars.removeUnlisted({ pvPower = true })
+  App.Values.init(qa, true)
+  eq(App.Values.removeObsolete(), true, "a restart follows")
   local names = {}
   for _, v in ipairs(written) do names[#names + 1] = v.name end
-  eq(names, { "host", "password", "pvPower" })
+  eq(names, { "host", "password", "values" })
   eq(written[2].value, "stored-value")
 end)
