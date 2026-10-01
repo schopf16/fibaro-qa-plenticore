@@ -3,6 +3,10 @@
 App.Sync = {}
 local Sync = App.Sync
 
+local function isFinite(number)
+  return number == number and number ~= math.huge and number ~= -math.huge
+end
+
 --- Canonical text of a setting value, so "50", "50.0" and 50 compare equal.
 function Sync.normalize(entry, value)
   if value == nil then return nil end
@@ -11,8 +15,11 @@ function Sync.normalize(entry, value)
   if text == "true" then return "1" end
   if text == "false" then return "0" end
   local number = tonumber(text)
-  if not number then return text end
-  if number == math.floor(number) then return string.format("%d", math.floor(number)) end
+  if not number or not isFinite(number) then return text end
+  local integer = math.tointeger(number)
+  if integer then return string.format("%d", integer) end
+  -- Whole numbers beyond the 64-bit integer range have no integer representation.
+  if number == math.floor(number) then return string.format("%.0f", number) end
   return (string.format("%.3f", number):gsub("0+$", ""):gsub("%.$", ""))
 end
 
@@ -25,7 +32,7 @@ function Sync.validate(entry, value, meta)
     return text
   end
   local number = tonumber(text)
-  if not number or number ~= number then return nil, "is not a number" end
+  if not number or not isFinite(number) then return nil, "is not a number" end
   meta = meta or {}
   if meta.type and meta.type:find("^u?int") or meta.type == "byte" or meta.type == "bool" then
     if number ~= math.floor(number) then return nil, "must be a whole number" end

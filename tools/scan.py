@@ -44,7 +44,7 @@ DEVICE_ID_PATTERNS = [
     ("device ID in a URL parameter", r"(?i)\bdevice_?id=(\d{2,})\b"),
     ("device ID in a log tag", r"\b[A-Z][A-Z0-9]{2,}_(\d{2,})\b"),
     ("device ID in text", r"(?i)\b(?:device|quickapp)(?:\s+id|id)?\s*[:=#]?\s*\(?(\d{3,})\b"),
-    ("device ID constant", r"\b\w+\s*=\s*(\d{2,})\s*--.*\bdevice\b"),
+    ("device ID constant", r"\b\w+\s*=\s*(\d{2,})\s*--[^\\\n]*\bdevice\b"),
 ]
 # IDs that examples and tests use instead of real ones.
 PLACEHOLDER_IDS = {"100", "123", "1234"}

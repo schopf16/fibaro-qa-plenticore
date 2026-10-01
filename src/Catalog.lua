@@ -246,6 +246,10 @@ end
 --- True if a new value differs enough from the last published one.
 function Catalog.changed(entry, old, new)
   if old == nil or type(old) ~= type(new) then return true end
-  if type(new) == "number" and entry.deadband then return math.abs(new - old) >= entry.deadband end
+  if type(new) == "number" and entry.deadband then
+    -- A change to or from zero is always published (e.g. PV power at night).
+    if (new == 0) ~= (old == 0) then return true end
+    return math.abs(new - old) >= entry.deadband
+  end
   return old ~= new
 end

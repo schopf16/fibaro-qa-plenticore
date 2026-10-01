@@ -15,6 +15,8 @@ App.OPTIONS = {
   pollIntervalSec = 10,     -- seconds between two readings: 5 to 3600
   deadband        = true,   -- true: write values only when they change by more than
                             -- 10 W, 0.01 kWh or 1 %; false: on every change
+  https           = true,   -- true: encrypted connection to the inverter (its self-signed
+                            -- certificate is accepted); false: plain HTTP
   logLevel        = "info", -- "error", "warn", "info" or "debug" (for bug reports)
   language        = "auto", -- "auto" (controller language), "en", "de", "fr" or "it"
 }
@@ -23,6 +25,7 @@ App.OPTIONS = {
 App.OPTION_SCHEMA = {
   { name = "pollIntervalSec", type = "integer", default = 10, min = 5, max = 3600 },
   { name = "deadband",        type = "boolean", default = true },
+  { name = "https",           type = "boolean", default = true },
 }
 
 local LIST_LENGTH   = 2000
@@ -132,7 +135,7 @@ function App.start(qa, cfg, options)
 
   App.Store.init(qa)
   App.Values.init(qa, options.deadband)
-  if App.Values.removeObsolete() then return end
+  if App.Values.removeObsolete(lists) then return end
   App.Children.sync(qa, lists.children)
   App.Display.init(qa, spec, App.set)
 
@@ -142,6 +145,7 @@ function App.start(qa, cfg, options)
     writeSet   = {},
     known      = {}, -- setting name -> last value read from the inverter
     intervalMs = options.pollIntervalSec * 1000,
+    https      = options.https,
     deadband   = options.deadband,
     failures   = 0,
   }
@@ -156,7 +160,7 @@ function App.start(qa, cfg, options)
   Log.info("Reading %s value(s), %s writable setting(s), %s child device(s), every %s s",
     #lists.read, #lists.write, #lists.children, options.pollIntervalSec)
 
-  state.client = App.Kostal.new({ host = cfg.host, password = cfg.password })
+  state.client = App.Kostal.new({ host = cfg.host, password = cfg.password, https = options.https })
   Ui.setStatus("status.loggingIn")
   App.connect()
 end
@@ -177,6 +181,9 @@ local function onFailure(err, kind, retry)
   local delayMs = Timer.backoff(state.failures, state.intervalMs, math.max(state.intervalMs, MAX_RETRY_MS))
   if state.online ~= false then
     Log.warn("Inverter %s; retrying with back-off", err)
+    if kind == "unreachable" and state.https then
+      Log.info("If the inverter does not offer HTTPS, set https = false in App.OPTIONS")
+    end
   else
     Log.debug("Still failing (%s); next attempt in %s s", err, delayMs // 1000)
   end
@@ -242,6 +249,8 @@ function App.poll()
     state.polling = false
     if state.stopped then return end
     if err then return onFailure(err, kind, App.poll) end
+    -- Scheduled first, so that an error while processing cannot stop polling.
+    Timer.after("poll", state.intervalMs, App.poll)
     local values = {}
     for _, entry in ipairs(entries) do
       local value = App.Catalog.present(entry, App.Catalog.raw(entry, processdata))
@@ -261,7 +270,6 @@ function App.poll()
       soc  = values.batterySoc or "-",
       time = os.date("%H:%M"),
     })
-    Timer.after("poll", state.intervalMs, App.poll)
   end)
 end
 

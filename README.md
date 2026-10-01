@@ -32,6 +32,13 @@ from the user interface, scenes and other QuickApps.
 2. In the HC3 web interface: **Settings → Devices → Add device → Other device →
    Upload file**, and select the `.fqa`.
 
+**Upgrading from 1.0.0:** import the new `.fqa` as a new QuickApp, or copy
+the new files into the existing one: first delete the file `Vars`, then
+replace the others. On its first start the QuickApp removes the variables of
+1.0.0 it no longer uses and keeps `host`, `password` and the three lists.
+Scenes that read single variables must read `values` instead
+([Reading values](#reading-values)).
+
 ### Step 2: Fill in the variables
 
 Open the new QuickApp and go to **Variables**. Saving the variables restarts
@@ -64,6 +71,8 @@ App.OPTIONS = {
   pollIntervalSec = 10,     -- seconds between two readings: 5 to 3600
   deadband        = true,   -- true: write values only when they change by more than
                             -- 10 W, 0.01 kWh or 1 %; false: on every change
+  https           = true,   -- true: encrypted connection to the inverter (its self-signed
+                            -- certificate is accepted); false: plain HTTP
   logLevel        = "info", -- "error", "warn", "info" or "debug" (for bug reports)
   language        = "auto", -- "auto" (controller language), "en", "de", "fr" or "it"
 }
@@ -87,6 +96,7 @@ values. If not, see [Troubleshooting](#troubleshooting).
 - Changes made on the inverter (web interface, app) are taken over
 - Optional child devices with stable IDs, including energy meters for the energy panel
 - Login as plant owner: the password never leaves the HC3 in clear text
+- Encrypted connection to the inverter (HTTPS)
 - Local network only - no internet access
 - User interface in English, German, French and Italian
 
@@ -163,7 +173,7 @@ Outside the HC3, the same data is available from the HC3 REST API:
 Numbers and on/off settings (`0`/`1`) are JSON numbers; states, names and time
 control are text. To keep the controller's database quiet, the variable is
 only written when a value changes by more than a small amount (10 W,
-0.01 kWh, 1 %); set `deadband = false` in the [options](#step-3-options-optional)
+0.01 kWh, 1 %) or changes to or from zero; set `deadband = false` in the [options](#step-3-options-optional)
 to write it on every change.
 
 ## Writing values
@@ -349,7 +359,22 @@ native speaker - [corrections are welcome](https://github.com/schopf16/fibaro-qa
 This QuickApp communicates only with the inverter in your local network. It
 does not contact the internet, does not check for updates and sends no
 telemetry. The password is stored in a password-type variable, never written
-to the log, and never sent to the inverter in clear text.
+to the log, and never sent to the inverter, not even encrypted: the login
+proves knowledge of the password (SCRAM-SHA256).
+
+- **Connection:** HTTPS by default (option `https`). The inverter's
+  certificate is self-signed and is therefore accepted without verification:
+  the traffic cannot be read, but a device that impersonates the inverter is
+  not recognised by its certificate. The login detects it instead - it checks
+  the inverter's signature and refuses a challenge with fewer than 10000 key
+  derivation rounds, so no proof that would allow a fast password search is
+  ever sent.
+- **Random numbers:** the controller has no cryptographic random source.
+  Nonces and keys come from a SHA-256 pool, seeded at every start and mixed
+  with the inverter's own random values.
+- **Plain HTTP** (`https = false`) is only needed for inverters without
+  HTTPS. The session ID can then be read by anyone who can see the traffic
+  in your network.
 
 Do not make the inverter's web interface or Modbus port reachable from the
 internet.
@@ -368,6 +393,9 @@ appends its device ID, e.g. `PLENTICORE_123`.
    never appear; if they do, please include them.
 5. Before sharing, remove addresses and personal names, then open an
    [issue](https://github.com/schopf16/fibaro-qa-plenticore/issues/new?template=bug_report.yml).
+
+"not reachable" right after switching to a new inverter: if the inverter
+does not offer HTTPS, set `https = false` in the [options](#step-3-options-optional).
 
 "Login rejected" means the inverter refused the password. The QuickApp then
 stops polling until the variables are saved again, so that repeated attempts

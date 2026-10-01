@@ -224,8 +224,11 @@ function Display.format(entry, value)
   return tostring(value)
 end
 
+--- Remember a value for the next render. Text from the inverter is escaped:
+-- the web interface shows label text literally, but other clients of the
+-- controller may render it as HTML.
 function Display.set(entry, value)
-  texts[entry.name] = Display.format(entry, value)
+  texts[entry.name] = Util.escapeHtml(Display.format(entry, value))
   raw[entry.name]   = value
 end
 

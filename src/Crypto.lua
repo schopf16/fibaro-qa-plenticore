@@ -272,12 +272,37 @@ function Crypto.b64decode(text)
   return table.concat(out)
 end
 
---- n pseudo-random bytes. The HC3 has no cryptographic random source; the
--- values only need to be unique (login nonce, AES-GCM IV of a one-time key).
+-- Random bytes ------------------------------------------------------------------
+--
+-- The HC3 has no cryptographic random source, and math.random returns the same
+-- sequence after every start. Random bytes therefore come from a SHA-256 pool,
+-- seeded from the time, the CPU clock and memory addresses (which differ on
+-- every start), and stirred with every request and with data from outside,
+-- such as the inverter's own random nonces (Crypto.addEntropy).
+
+local pool    = nil
+local counter = 0
+
+local function stir(data)
+  pool = Crypto.sha256(table.concat({ pool or "", tostring(data), tostring(os.time()),
+    string.format("%.6f", os.clock()), tostring({}), tostring(function() end) }, "|"))
+end
+
+--- Mix data into the random pool, e.g. a nonce received from the inverter.
+function Crypto.addEntropy(data)
+  stir(data)
+end
+
+--- n random bytes from the pool.
 function Crypto.randomBytes(n)
-  local out = {}
-  for i = 1, n do out[i] = schar(math.random(0, 255)) end
-  return table.concat(out)
+  stir(counter)
+  local out, length = {}, 0
+  while length < n do
+    counter = counter + 1
+    out[#out + 1] = Crypto.sha256(pool .. "|out|" .. counter)
+    length = length + 32
+  end
+  return table.concat(out):sub(1, n)
 end
 
 function Crypto.hex(data)

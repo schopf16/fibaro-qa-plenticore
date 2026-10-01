@@ -32,15 +32,15 @@ end)
 
 -- Reference values computed with an independent Python implementation.
 local V = {
-  passphrase = "correct horse", rounds = 100, sessionToken = "session-token-42",
+  passphrase = "correct horse", rounds = 10000, sessionToken = "session-token-42",
   clientNonce = "AQIDBAUGBwgJCgsM",
   serverNonce = "c2VydmVyLW5vbmNlLTEyMzQ1Ng==",
   salt = "MDEyMzQ1Njc4OWFiY2RlZg==",
-  proof = "jhm+htiEcuFhtl9vx/hB2Uiyttaz11sEZXnmTfcc5Tk=",
-  signature = "WTVBeJLnm0rM6uA06wAdECuAFrOz6vT5hKyOP0diQkg=",
+  proof = "SXMd4+oJ8Sv6Hd1VrJTVb+atv/NEyNk8PGA7LHso6yQ=",
+  signature = "44O/5MPi2MiKz3/YFYaL5VveoQaeA7kNNqy75ID9MCI=",
   iv = "ZGVmZ2hpamtsbW5vcHFycw==",
-  payload = "iAzwoLUvW+8K7bR35kvx9g==",
-  tag = "aH3u10UW8wfjSyO8lHeBAg==",
+  payload = "EniaLG9zBqVm2Vj8R/WMqg==",
+  tag = "veN/AoHsUWwFuJ8Rjn8GSg==",
 }
 
 local function bytes(from, count)
@@ -141,6 +141,51 @@ end)
 
 -- Platform -------------------------------------------------------------------
 
+test("a challenge with too few key derivation rounds is refused before any proof is sent", function()
+  for _, rounds in ipairs({ 1, 9999 }) do
+    local inverter = fakeInverter()
+    local transport = inverter.transport
+    inverter.transport = function(method, url, headers, body, callback)
+      if url:find("auth/start", 1, true) then
+        inverter.calls[#inverter.calls + 1] = method .. " auth/start"
+        local start = { nonce = V.serverNonce, salt = V.salt, rounds = rounds, transactionId = "t" }
+        return callback(200, json.encode(start))
+      end
+      return transport(method, url, headers, body, callback)
+    end
+    local err, _, kind = run(function(done) newClient(inverter):processdata({}, done) end)
+    eq(kind, "protocol")
+    ok(err:find("asked for " .. rounds .. " key derivation rounds", 1, true), err)
+    eq(inverter.calls, { "POST auth/start" }, "no proof sent")
+  end
+end)
+
+test("https connects to the same API over an encrypted connection", function()
+  local urls = {}
+  local client = App.Kostal.new({ host = "192.0.2.5", ["password"] = "x", https = true,
+    transport = function(_, url, _, _, callback) urls[#urls + 1] = url; callback(nil, nil, "timeout") end })
+  run(function(done) client:processdata({}, done) end)
+  eq(urls[1], "https://192.0.2.5/api/v1/auth/start")
+end)
+
+test("random bytes do not depend on math.random and never repeat", function()
+  math.randomseed(1)
+  local a = C.randomBytes(16)
+  math.randomseed(1)
+  local b = C.randomBytes(16)
+  ok(a ~= b, "same bytes after the same math.random seed")
+  eq(#C.randomBytes(12), 12)
+  eq(#C.randomBytes(45), 45)
+  local seen = {}
+  for _ = 1, 200 do
+    local bytes16 = C.randomBytes(16)
+    ok(not seen[bytes16], "repeated random bytes")
+    seen[bytes16] = true
+  end
+  C.addEntropy("nonce from the inverter")
+  eq(#C.randomBytes(16), 16)
+end)
+
 test("a Lua with 32-bit integers stops with a clear status instead of computing wrong values", function()
   local qa = FakeQA.new({})
   I18n.register(App.STRINGS)
@@ -209,6 +254,14 @@ test("settings are normalized and validated against the inverter's limits", func
   eq(select(2, Sync.validate(minSoc, "150", meta)), "must be between 5 and 100")
   eq(select(2, Sync.validate(minSoc, "12.5", meta)), "must be a whole number")
   eq(select(2, Sync.validate(minSoc, "abc", meta)), "is not a number")
+  eq(Sync.normalize(minSoc, "1e20"), "100000000000000000000", "beyond the integer range")
+  eq(Sync.normalize(minSoc, "-1e19"), "-10000000000000000000")
+  eq(Sync.normalize(minSoc, "1e999"), "1e999", "infinity stays text")
+  eq(select(2, Sync.validate(minSoc, "1e20", meta)), "must be between 5 and 100")
+  eq(select(2, Sync.validate(minSoc, 1e20, meta)), "must be between 5 and 100")
+  eq(select(2, Sync.validate(minSoc, "1e999", meta)), "is not a number")
+  eq(select(2, Sync.validate(minSoc, "-1e999", meta)), "is not a number")
+  eq(select(2, Sync.validate(minSoc, "nan", meta)), "is not a number")
   local slots = Catalog.get("batteryTimeControlMon")
   eq(Sync.validate(slots, string.rep("0", 96)), string.rep("0", 96))
   ok(select(2, Sync.validate(slots, string.rep("0", 95))))
@@ -270,6 +323,21 @@ test("all values are published in one JSON variable, only when they change", fun
   App.Values.flush()
   eq(writes, 2)
   eq(json.decode(qa.variables.values).pvPower, 1020)
+end)
+
+test("a change to or from zero is always published", function()
+  local qa = valuesQA()
+  App.Values.init(qa, true)
+  App.Values.set(Catalog.get("pvPower"), 8)
+  App.Values.flush()
+  App.Values.set(Catalog.get("pvPower"), 0)
+  App.Values.flush()
+  eq(json.decode(qa.variables.values).pvPower, 0, "8 W -> 0 W")
+  App.Values.set(Catalog.get("pvPower"), 3)
+  App.Values.flush()
+  eq(json.decode(qa.variables.values).pvPower, 3, "0 W -> 3 W")
+  ok(Catalog.changed(Catalog.get("pvPower"), 5, 0))
+  ok(not Catalog.changed(Catalog.get("pvPower"), 5, 9))
 end)
 
 test("without dead band every change is published", function()
@@ -334,6 +402,14 @@ test("the value table shows names, values, switches and sliders", function()
   Display.set(Catalog.get("pvPower"), 520)
   Display.render()
   eq(writes, first + 1, "only the changed value label is written")
+end)
+
+test("text from the inverter is escaped before it is shown", function()
+  local qa = FakeQA.new({})
+  Display.init(qa, { { name = "model" } }, function() end)
+  Display.set(Catalog.get("model"), '<img src=x onerror="alert(1)">')
+  Display.render()
+  eq(qa.views.lblValue1.text, "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;")
 end)
 
 test("moving a slider or flipping a switch calls the handler with the setting and value", function()
@@ -556,24 +632,123 @@ test("foreign children are never touched", function()
   ok(DEVICES[150] and DEVICES[151])
 end)
 
-test("variables of version 1.0.0 are removed and the password is kept", function()
+local function variablesOn(list)
+  DEVICES[100].properties = { quickAppVariables = list }
+  api.get = function(path) if path == "/devices/100" then return DEVICES[100], 200 end end
+  local puts = 0
+  api.put = function(_, body)
+    puts = puts + 1
+    DEVICES[100].properties.quickAppVariables = body.properties.quickAppVariables
+    return {}, 200
+  end
+  return function() return puts end
+end
+
+local function variableNames()
+  local names = {}
+  for _, v in ipairs(DEVICES[100].properties.quickAppVariables) do names[#names + 1] = v.name end
+  return names
+end
+
+local LISTS_100 = { read = { "pvPower" }, write = { "batteryMinSoc" }, children = {} }
+
+test("the migration removes only variables of 1.0.0, keeps the password, and runs once", function()
   controller()
+  STORAGE = {}
   local qa = restart()
   qa.variables["password"] = "stored-value"
-  DEVICES[100].properties = { quickAppVariables = {
+  local puts = variablesOn({
     { name = "host", type = "string", value = "192.0.2.5" },
     { name = "password", type = "password", value = "****" },
     { name = "pvPower", type = "string", value = "1000" },
+    { name = "batteryMinSoc", type = "string", value = "5" },
+    { name = "batterySoc", type = "string", value = "created by the user" },
     { name = "logLevel", type = "string", value = "info" },
     { name = "values", type = "string", value = "{}" },
-  } }
-  api.get = function(path) if path == "/devices/100" then return DEVICES[100], 200 end end
-  local written
-  api.put = function(_, body) written = body.properties.quickAppVariables; return {}, 200 end
+  })
   App.Values.init(qa, true)
-  eq(App.Values.removeObsolete(), true, "a restart follows")
-  local names = {}
-  for _, v in ipairs(written) do names[#names + 1] = v.name end
-  eq(names, { "host", "password", "values" })
-  eq(written[2].value, "stored-value")
+  eq(App.Values.removeObsolete(LISTS_100), true, "a restart follows")
+  eq(variableNames(), { "host", "password", "batterySoc", "values" }, "batterySoc was not listed: kept")
+  eq(DEVICES[100].properties.quickAppVariables[2].value, "stored-value")
+  DEVICES[100].properties.quickAppVariables[#DEVICES[100].properties.quickAppVariables + 1] =
+    { name = "pvPower", type = "string", value = "created by the user later" }
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), false, "runs only once")
+  eq(puts(), 1)
+end)
+
+test("a new installation is not migrated, also not a variable the user created before the first start", function()
+  controller()
+  STORAGE = {}
+  local puts = variablesOn({ { name = "host", type = "string", value = "192.0.2.5" },
+                             { name = "pvPower", type = "string", value = "created by the user" } })
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), false)
+  eq(puts(), 0)
+end)
+
+test("a migration without access to the variable list is tried again at the next start", function()
+  controller()
+  STORAGE = {}
+  local qa = restart()
+  local version1 = { { name = "pvPower", type = "string", value = "1000" },
+                     { name = "language", type = "string", value = "auto" } }
+  variablesOn(version1)
+  api.get = function() return nil, 500 end
+  App.Values.init(qa, true)
+  eq(App.Values.removeObsolete(LISTS_100), false)
+  variablesOn(version1)
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), true, "removed at the next start")
+end)
+
+test("a migration the controller does not keep is reported and does not restart", function()
+  controller()
+  STORAGE = {}
+  local qa = restart()
+  variablesOn({ { name = "host", type = "string", value = "192.0.2.5" },
+                { name = "pvPower", type = "string", value = "1000" },
+                { name = "logLevel", type = "string", value = "info" } })
+  api.put = function() return {}, 200 end
+  App.Values.init(qa, true)
+  eq(App.Values.removeObsolete(LISTS_100), false)
+  ok(logText():find("did not remove the variables", 1, true), logText())
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), false, "not tried again")
+end)
+
+-- Polling ----------------------------------------------------------------------------
+
+test("an error while processing a reading does not stop polling", function()
+  controller()
+  STORAGE = {}
+  local qa = restart()
+  local everything = setmetatable({}, { __index = function() return setmetatable({}, {
+    __index = function() return true end }) end })
+  local readings = 0
+  local savedNew, savedUpdate = App.Kostal.new, App.Children.update
+  App.Kostal.new = function()
+    return {
+      processdataIds = function(_, callback) callback(nil, everything) end,
+      settingsMeta   = function(_, callback) callback(nil, {}) end,
+      settings       = function(_, _, callback) callback(nil, {}) end,
+      processdata    = function(_, _, callback)
+        readings = readings + 1
+        Safe.call("kostal.http", callback, nil, {})
+      end,
+    }
+  end
+  local failed = false
+  App.Children.update = function(...)
+    if not failed then failed = true; error("unexpected data") end
+    return savedUpdate(...)
+  end
+  App.start(qa, { host = "192.0.2.5", ["password"] = "x", readValues = "pvPower", writeValues = "none",
+                  childValues = "none" }, { pollIntervalSec = 10, deadband = true, https = false })
+  eq(readings, 1)
+  ok(logText():find("unexpected data", 1, true), "the error is logged")
+  advance(10000)
+  eq(readings, 2, "the next reading still happens")
+  App.Kostal.new, App.Children.update = savedNew, savedUpdate
+  Timer.cancelAll()
 end)

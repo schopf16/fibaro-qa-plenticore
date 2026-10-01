@@ -6,6 +6,11 @@
 -- timers so the QuickApp stays responsive; its result is kept in memory for
 -- later logins and never stored or logged.
 --
+-- With https, the connection is encrypted. The inverter's certificate is
+-- self-signed, so it is accepted without verification: this protects against
+-- reading the traffic, not against a device that impersonates the inverter.
+-- The login itself detects such a device (server signature, minimum rounds).
+--
 -- All callbacks receive (err, data, kind). kind is nil on success, otherwise
 -- "unreachable" (network), "auth" (credentials rejected) or "protocol".
 
@@ -15,20 +20,22 @@ Kostal.__index = Kostal
 
 local TIMEOUT_MS   = 10000
 local PBKDF2_SLICE = 500
+local MIN_ROUNDS   = 10000   -- the inverter uses 29000; fewer would make the proof easy to brute-force
 local MAX_ROUNDS   = 1000000
 
 local function httpTransport(method, url, headers, body, callback)
   net.HTTPClient():request(url, {
-    options = { method = method, headers = headers, data = body, timeout = TIMEOUT_MS },
+    options = { method = method, headers = headers, data = body, timeout = TIMEOUT_MS,
+                checkCertificate = false },
     success = Safe.wrap("kostal.http", function(response) callback(response.status, response.data) end),
     error = Safe.wrap("kostal.http", function(message) callback(nil, nil, tostring(message)) end),
   })
 end
 
---- opts: host, password, user ("user" = plant owner), transport, random (for tests).
+--- opts: host, password, https, user ("user" = plant owner), transport, random (for tests).
 function Kostal.new(opts)
   return setmetatable({
-    base      = "http://" .. opts.host .. "/api/v1/",
+    base      = (opts.https and "https://" or "http://") .. opts.host .. "/api/v1/",
     password  = opts.password,
     user      = opts.user or "user",
     transport = opts.transport or httpTransport,
@@ -89,7 +96,6 @@ end
 local function validStart(start)
   return type(start) == "table" and type(start.nonce) == "string" and type(start.salt) == "string"
     and type(start.transactionId) == "string" and math.type(start.rounds) == "integer"
-    and start.rounds > 0 and start.rounds <= MAX_ROUNDS
 end
 
 -- PBKDF2 in slices, cached per salt and round count.
@@ -134,6 +140,12 @@ function Kostal:login(callback)
   self:call("POST", "auth/start", { username = self.user, nonce = clientNonce }, function(err, start, status)
     if err then return failed("auth/start", err, status) end
     if not validStart(start) then return done("login: unexpected auth/start response", "protocol") end
+    if start.rounds < MIN_ROUNDS or start.rounds > MAX_ROUNDS then
+      -- Never send a proof for such a challenge: it would allow a fast offline password search.
+      return done(string.format("login: the inverter asked for %d key derivation rounds (allowed %d to %d)"
+        .. " - is another device at this address?", start.rounds, MIN_ROUNDS, MAX_ROUNDS), "protocol")
+    end
+    App.Crypto.addEntropy(start.nonce .. start.salt .. start.transactionId)
     self:saltedPassword(start.salt, start.rounds, function(salted)
       local scram = Kostal.scram(self.user, clientNonce, start, salted)
       local finish = { transactionId = start.transactionId, proof = scram.proof }
@@ -145,6 +157,7 @@ function Kostal:login(callback)
         if App.Crypto.b64decode(fin.signature) ~= scram.serverSignature then
           return done("login: the inverter's signature is wrong - is another device at this address?", "protocol")
         end
+        App.Crypto.addEntropy(fin.token)
         local body = Kostal.sessionRequest(start.transactionId, scram.sessionKey, fin.token, self.random(16))
         self:call("POST", "auth/create_session", body, function(err3, session, status3)
           if err3 then return failed("auth/create_session", err3, status3) end
