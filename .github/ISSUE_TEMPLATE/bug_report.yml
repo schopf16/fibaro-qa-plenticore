@@ -49,7 +49,7 @@ body:
     attributes:
       label: Log excerpt
       description: >-
-        Set the QuickApp variable logLevel to "debug" and save, reproduce the
+        Set logLevel = "debug" in App.OPTIONS (QuickApp editor, file App) and save, reproduce the
         problem, then copy everything from the line "... starting on ..." up to
         the problem. Include any "QuickApp crashed" lines.
       render: text

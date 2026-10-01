@@ -107,7 +107,9 @@ function Children.sync(quickApp, names)
 end
 
 --- Update child values. Children deleted while running are reported once.
-function Children.update(values, existingIds)
+-- With deadband, a value is written only when it changed by more than its
+-- dead band; without, on every change.
+function Children.update(values, existingIds, deadband)
   for name, child in pairs(active) do
     if existingIds and not existingIds[child.id] then
       if not missing[name] then
@@ -115,7 +117,8 @@ function Children.update(values, existingIds)
         Log.warn("Child %s for '%s' was deleted; it is recreated at the next start "
           .. "while listed in childValues", child.id, name)
       end
-    elseif values[name] ~= nil and App.Catalog.changed(App.Catalog.get(name), last[name], values[name]) then
+    elseif values[name] ~= nil and (deadband == false and last[name] ~= values[name]
+        or deadband ~= false and App.Catalog.changed(App.Catalog.get(name), last[name], values[name])) then
       child:updateProperty("value", values[name])
       last[name] = values[name]
     end

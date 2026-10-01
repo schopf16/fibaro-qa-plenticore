@@ -4,12 +4,14 @@
 --   0. appends the device ID to the log tag if this QuickApp is installed
 --      more than once, so each instance can be told apart in the log,
 --   1. logs name, version, platform, firmware and device ID,
---   2. loads and validates the configuration (Config.COMMON + App.CONFIG),
---   3. registers secrets for redaction, applies the log level, and logs a
---      configuration summary without addresses or secrets,
+--   2. validates the options in App.OPTIONS (Config.OPTIONS + App.OPTION_SCHEMA)
+--      and applies the log level; an invalid option is logged and replaced by
+--      its default,
+--   3. loads and validates the QuickApp variables (App.CONFIG), registers
+--      secrets for redaction, and logs a summary without addresses or secrets,
 --   4. selects the UI language and translates the static UI,
 --   5. stops in a visible "not configured" state if anything is invalid,
---   6. otherwise calls App.start(self, cfg) protected by Safe.
+--   6. otherwise calls App.start(self, cfg, options) protected by Safe.
 
 Boot = {}
 
@@ -49,14 +51,25 @@ function Boot.run(qa, app)
     controller.platform or "unknown platform", controller.softVersion or "unknown", qa.id or "?",
     siblings > 0 and ", " .. (siblings + 1) .. " instances installed" or "")
 
+  local optionSchema = Config.merge(Config.OPTIONS, app.OPTION_SCHEMA or {})
+  local options, problems = Config.loadOptions(optionSchema, app.OPTIONS)
+  Log.setLevel(options.logLevel)
+  for _, p in ipairs(problems) do
+    if p.default ~= nil then
+      Log.error("App.OPTIONS.%s = %s %s; using %s", p.name, p.value, p.reason, tostring(p.default))
+    else
+      Log.error("App.OPTIONS.%s %s and is ignored", p.name, p.reason)
+    end
+  end
+
   local schema = Config.merge(Config.COMMON, app.CONFIG or {})
   local cfg, errors, secrets = Config.load(schema, function(name) return qa:getVariable(name) end)
   for _, secret in ipairs(secrets) do Log.addSecret(secret) end
-  Log.setLevel(cfg.logLevel or "info")
 
   I18n.register(LibStrings)
   I18n.register(app.STRINGS or {})
-  I18n.setLanguage(I18n.resolve(cfg.language, controller.defaultLanguage))
+  I18n.setLanguage(I18n.resolve(options.language, controller.defaultLanguage))
+  Log.info("Options: %s", Config.describe(optionSchema, options))
   Log.info("Configuration: %s; UI language %s", Config.describe(schema, cfg, errors), I18n.language())
   Ui.init(qa, app.UI)
 
@@ -72,7 +85,7 @@ function Boot.run(qa, app)
   end
 
   Ui.setStatus("lib.status.starting")
-  if not Safe.call("App.start", app.start, qa, cfg) then
+  if not Safe.call("App.start", app.start, qa, cfg, options) then
     Ui.setStatus("lib.status.error")
     return false
   end

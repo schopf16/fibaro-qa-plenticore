@@ -16,9 +16,13 @@ Config = {}
 
 local DEFAULT_MAX_LENGTH = 256
 
---- Variables every QuickApp has.
-Config.COMMON = {
-  { name = "logLevel", type = "enum", values = Log.LEVEL_NAMES, default = "info" },
+--- QuickApp variables every QuickApp has (none; projects add App.CONFIG).
+Config.COMMON = {}
+
+--- Options every QuickApp has. They are set in App.OPTIONS in the code, not as
+-- QuickApp variables; projects add their own fields with App.OPTION_SCHEMA.
+Config.OPTIONS = {
+  { name = "logLevel", type = "enum", values = Log.LEVEL_NAMES,                    default = "info" },
   { name = "language", type = "enum", values = { "auto", "en", "de", "fr", "it" }, default = "auto" },
 }
 
@@ -177,6 +181,33 @@ function Config.describe(schema, cfg, errors)
     parts[#parts + 1] = field.name .. "=" .. text
   end
   return table.concat(parts, ", ")
+end
+
+--- Validate options given in code (App.OPTIONS). An invalid value falls back
+-- to the field's default; unknown names are reported. Returns the options and
+-- a list of problems: { name, value, reason, default }.
+function Config.loadOptions(schema, given)
+  given = type(given) == "table" and given or {}
+  local options, problems, known = {}, {}, {}
+  for _, field in ipairs(schema) do
+    known[field.name] = true
+    local raw = given[field.name]
+    local value, reason = Config.parse(field, raw ~= nil and tostring(raw) or nil)
+    if reason then
+      problems[#problems + 1] = { name = field.name, value = tostring(raw), reason = reason, default = field.default }
+      value = field.default
+    end
+    options[field.name] = value
+  end
+  local unknown = {}
+  for name in pairs(given) do
+    if not known[name] then unknown[#unknown + 1] = tostring(name) end
+  end
+  table.sort(unknown)
+  for _, name in ipairs(unknown) do
+    problems[#problems + 1] = { name = name, value = tostring(given[name]), reason = "is not a known option" }
+  end
+  return options, problems
 end
 
 --- The HC3 variable type the manifest must declare for a field.

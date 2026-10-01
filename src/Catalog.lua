@@ -108,8 +108,16 @@ local function info(name, ids, enum)
 end
 
 -- format: "number", "switch" (0/1) or "slots" (96 quarter hours).
-local function setting(name, id, unit, format)
-  add({ name = name, kind = "setting", module = LOCAL, id = id, unit = unit, format = format })
+-- slider: { min, max, step } for a slider in the QuickApp's UI; switches get a
+-- switch. Other settings have no UI control and are changed with "set".
+local function setting(name, id, unit, format, slider)
+  local entry = { name = name, kind = "setting", module = LOCAL, id = id, unit = unit, format = format }
+  if format == "switch" then
+    entry.control = { type = "switch" }
+  elseif slider then
+    entry.control = { type = "slider", min = slider[1], max = slider[2], step = slider[3] }
+  end
+  add(entry)
 end
 
 -- Measured values ------------------------------------------------------------
@@ -151,8 +159,8 @@ percent("selfConsumptionDay", STAT, "Statistic:OwnConsumptionRate:Day")
 
 -- Settings -------------------------------------------------------------------
 
---      name                         setting                               unit  format
-setting("batteryMinSoc",             "Battery:MinSoc",                     "%",  "number")
+--      name                         setting                               unit  format    slider
+setting("batteryMinSoc",             "Battery:MinSoc",                     "%",  "number", { 5, 100, 1 })
 setting("batteryMinHomeConsumption", "Battery:MinHomeComsumption",         "W",  "number")
 setting("batterySmartControl",       "Battery:SmartBatteryControl:Enable", "",   "switch")
 setting("batteryDynamicSoc",         "Battery:DynamicSoc:Enable",          "",   "switch")

@@ -1,25 +1,43 @@
--- App: reads the values listed in readValues and childValues, synchronises
--- the settings listed in writeValues, and keeps the user interface up to date.
+-- App: reads the values listed in readValues and childValues, keeps the
+-- settings listed in writeValues up to date and writes them on request, and
+-- keeps the user interface up to date.
 --
 -- All project code lives in the global App table (App.Catalog, App.Kostal,
--- App.Sync, App.Vars, App.Children, App.Display, App.Store, App.Crypto).
+-- App.Sync, App.Values, App.Children, App.Display, App.Store, App.Crypto).
 
 App = {}
 
 App.STRINGS = Strings
 
-local LIST_LENGTH   = 2000
-local DEFAULT_READ  = "pvPower, homePower, gridPower, batteryPower, batterySoc, yieldDay"
-local DEFAULT_WRITE = "batteryMinSoc, batterySmartControl"
+-- Options of this QuickApp. Change a value here and save; the QuickApp restarts.
+-- An invalid value is reported in the log and replaced by its default.
+App.OPTIONS = {
+  pollIntervalSec = 10,     -- seconds between two readings: 5 to 3600
+  deadband        = true,   -- true: write values only when they change by more than
+                            -- 10 W, 0.01 kWh or 1 %; false: on every change
+  logLevel        = "info", -- "error", "warn", "info" or "debug" (for bug reports)
+  language        = "auto", -- "auto" (controller language), "en", "de", "fr" or "it"
+}
 
---- Project variables, added to Config.COMMON (logLevel, language).
+--- Project options, added to Config.OPTIONS (logLevel, language).
+App.OPTION_SCHEMA = {
+  { name = "pollIntervalSec", type = "integer", default = 10, min = 5, max = 3600 },
+  { name = "deadband",        type = "boolean", default = true },
+}
+
+local LIST_LENGTH   = 2000
+local DEFAULT_READ  = "pvPower, homePower, gridPower, batteryPower, batterySoc, yieldDay, yieldTotal, "
+                   .. "homeFromGridTotal"
+local DEFAULT_WRITE = "batteryMinSoc"
+local DEFAULT_CHILD = "pvPower, gridPower, batteryPower, batterySoc, yieldTotal, homeFromGridTotal"
+
+--- QuickApp variables (entered in the HC3).
 App.CONFIG = {
-  { name = "host",            type = "host",    required = true },
-  { name = "password",        type = "secret",  required = true },
-  { name = "pollIntervalSec", type = "integer", default = 30, min = 10, max = 3600 },
-  { name = "readValues",      type = "string",  default = DEFAULT_READ,  maxLength = LIST_LENGTH },
-  { name = "writeValues",     type = "string",  default = DEFAULT_WRITE, maxLength = LIST_LENGTH },
-  { name = "childValues",     type = "string",  default = "none",        maxLength = LIST_LENGTH },
+  { name = "host",        type = "host",   required = true },
+  { name = "password",    type = "secret", required = true },
+  { name = "readValues",  type = "string", default = DEFAULT_READ,  maxLength = LIST_LENGTH },
+  { name = "writeValues", type = "string", default = DEFAULT_WRITE, maxLength = LIST_LENGTH },
+  { name = "childValues", type = "string", default = DEFAULT_CHILD, maxLength = LIST_LENGTH },
 }
 
 App.UI = {
@@ -40,7 +58,7 @@ local LISTS = {
 
 local state = {}
 
--- Lists ------------------------------------------------------------------------
+-- Lists --------------------------------------------------------------------------
 
 --- Parse the three lists. Returns lists, or nil and the invalid entries per variable.
 function App.parseLists(cfg)
@@ -68,21 +86,27 @@ end
 local function isProcess(entry) return entry.kind == "process" end
 local function isFromSettings(entry) return entry.kind ~= "process" end -- settings and device information
 
---- Names shown in the value list: readValues, then writeValues not already shown.
-local function displayNames(lists)
-  local names, seen = {}, {}
+--- The value table: readValues, then writeValues not already shown. Settings
+-- in writeValues get their UI control (switch or slider), if they have one.
+function App.tableSpec(lists)
+  local spec, seen, writable = {}, {}, {}
+  for _, name in ipairs(lists.write) do writable[name] = true end
   for _, list in ipairs({ lists.read, lists.write }) do
     for _, name in ipairs(list) do
-      if not seen[name] then names[#names + 1], seen[name] = name, true end
+      if not seen[name] then
+        seen[name] = true
+        local entry = App.Catalog.get(name)
+        spec[#spec + 1] = { name = name, control = writable[name] and entry.control or nil }
+      end
     end
   end
-  return names
+  return spec
 end
 
--- Start ------------------------------------------------------------------------
+-- Start --------------------------------------------------------------------------
 
 --- Called once by Boot.run with a valid configuration.
-function App.start(qa, cfg)
+function App.start(qa, cfg, options)
   -- The login (SHA-256, AES-GCM) needs 64-bit integers; stop visibly on a Lua with smaller ones.
   if math.maxinteger < 2 ^ 62 then
     Log.error("This controller's Lua has integers up to %s; the inverter login needs 64-bit integers",
@@ -103,37 +127,41 @@ function App.start(qa, cfg)
     return
   end
 
+  local spec = App.tableSpec(lists)
+  if App.Display.ensureLayout(qa, spec) then return end
+
+  App.Store.init(qa)
+  App.Values.init(qa, options.deadband)
+  if App.Values.removeObsolete() then return end
+  App.Children.sync(qa, lists.children)
+  App.Display.init(qa, spec, App.set)
+
   state = {
     lists      = lists,
     readSet    = {},
     writeSet   = {},
-    intervalMs = cfg.pollIntervalSec * 1000,
+    known      = {}, -- setting name -> last value read from the inverter
+    intervalMs = options.pollIntervalSec * 1000,
+    deadband   = options.deadband,
     failures   = 0,
   }
   for _, name in ipairs(lists.read) do state.readSet[name] = true end
   for _, name in ipairs(lists.write) do state.writeSet[name] = true end
-
-  local shownNames = displayNames(lists)
-  if App.Display.ensureLayout(qa, #shownNames) then return end
-
-  App.Store.init(qa)
-  App.Sync.init()
-  App.Vars.init(qa)
-  local keep = {}
-  for name in pairs(state.readSet) do keep[name] = true end
-  for name in pairs(state.writeSet) do keep[name] = true end
-  App.Vars.removeUnlisted(keep)
-  App.Children.sync(qa, lists.children)
-  App.Display.init(qa, shownNames)
-  Log.info("Reading %s value(s), synchronising %s setting(s), %s child device(s)",
-    #lists.read, #lists.write, #lists.children)
+  for _, item in ipairs(spec) do
+    if state.writeSet[item.name] and not item.control then
+      Log.warn("writeValues: '%s' has no switch or slider in the QuickApp's user interface; "
+        .. "change it with fibaro.call(id, \"set\", \"%s\", value)", item.name, item.name)
+    end
+  end
+  Log.info("Reading %s value(s), %s writable setting(s), %s child device(s), every %s s",
+    #lists.read, #lists.write, #lists.children, options.pollIntervalSec)
 
   state.client = App.Kostal.new({ host = cfg.host, password = cfg.password })
   Ui.setStatus("status.loggingIn")
   App.connect()
 end
 
--- Failures ---------------------------------------------------------------------
+-- Failures -----------------------------------------------------------------------
 
 local function stop(err)
   -- Retrying a rejected password could lock the account; wait for a new configuration.
@@ -175,7 +203,7 @@ function App.connect()
   end)
 end
 
--- Process data -----------------------------------------------------------------
+-- Process data -------------------------------------------------------------------
 
 -- The query for all process values needed: listed values, children and the
 -- two values of the status line.
@@ -204,19 +232,6 @@ local function processQuery()
   return query, entries
 end
 
--- A variable in writeValues that differs from its reference was changed on the HC3.
-local function checkLocalChanges()
-  local references = App.Sync.references()
-  for _, entry in ipairs(entriesOf(state.lists.write)) do
-    local localValue = App.Sync.normalize(entry, App.Vars.get(entry.name))
-    local reference  = references[entry.name]
-    if localValue ~= "" and reference ~= nil and localValue ~= reference then
-      Log.debug("Local change of '%s' detected", entry.name)
-      return App.syncSettings()
-    end
-  end
-end
-
 --- One polling cycle.
 function App.poll()
   if state.polling or state.stopped or not state.available then return end
@@ -232,11 +247,12 @@ function App.poll()
       local value = App.Catalog.present(entry, App.Catalog.raw(entry, processdata))
       values[entry.name] = value
       if state.readSet[entry.name] then
-        App.Vars.publish(entry, value)
+        App.Values.set(entry, value)
         App.Display.set(entry, value)
       end
     end
-    App.Children.update(values, state.existingIds)
+    App.Values.flush()
+    App.Children.update(values, state.existingIds, state.deadband)
     App.Display.render()
     if state.online ~= true then Log.info("Inverter online") end
     state.online, state.failures = true, 0
@@ -245,12 +261,11 @@ function App.poll()
       soc  = values.batterySoc or "-",
       time = os.date("%H:%M"),
     })
-    checkLocalChanges()
     Timer.after("poll", state.intervalMs, App.poll)
   end)
 end
 
--- Settings ---------------------------------------------------------------------
+-- Settings -----------------------------------------------------------------------
 
 local function settingsQuery(entries)
   local query = {}
@@ -275,94 +290,17 @@ local function metaOf(entry)
   return state.meta and state.meta[entry.module] and state.meta[entry.module][entry.id]
 end
 
-local function showSetting(entry, value)
-  App.Vars.set(entry.name, value)
+-- Publish a setting's current value (normalized text) everywhere.
+local function showSetting(entry, text)
+  local value = App.Sync.publishable(entry, text)
+  App.Values.set(entry, value)
   App.Display.set(entry, value)
 end
 
-local function finishSync()
-  App.Display.render()
-  state.syncing = false
-  if state.syncAgain then
-    state.syncAgain = false
-    App.syncSettings()
-  end
-end
-
--- The inverter applies a written value with a short delay, so the read-back
--- is repeated a few times before a difference counts as rejected.
-local function verifyWrites(pending, attempt)
-  local entries = {}
-  for name in pairs(pending) do entries[#entries + 1] = App.Catalog.get(name) end
-  state.client:settings(settingsQuery(entries), function(err, remote, kind)
-    if err then
-      Log.error("Cannot read back written settings: %s", err)
-      if kind == "auth" then stop(err) end
-      return finishSync()
-    end
-    local references, open = App.Sync.references(), {}
-    for name, wanted in pairs(pending) do
-      local entry  = App.Catalog.get(name)
-      local actual = App.Sync.normalize(entry, remoteValue(remote, entry))
-      if actual == wanted then
-        Log.info("Setting '%s' changed to %s on the inverter", name, wanted)
-        references[name] = actual
-        showSetting(entry, actual)
-      elseif attempt < VERIFY_ATTEMPTS then
-        open[name] = wanted
-      else
-        Log.error("The inverter kept '%s' at %s instead of %s", name, actual, wanted)
-        references[name] = actual
-        showSetting(entry, actual)
-      end
-    end
-    App.Sync.saveReferences(references)
-    if next(open) then
-      return Timer.after("verify", VERIFY_DELAY_MS, function() verifyWrites(open, attempt + 1) end)
-    end
-    finishSync()
-  end)
-end
-
--- Compare one listed setting with the inverter. Returns the value to write, if any.
-local function reconcile(entry, remote, references)
-  local name       = entry.name
-  local remoteText = App.Sync.normalize(entry, remoteValue(remote, entry))
-  local localText  = App.Sync.normalize(entry, App.Vars.get(name))
-  local action     = App.Sync.decide(localText, remoteText, references[name])
-
-  if action == "write" then
-    local valid, reason = App.Sync.validate(entry, localText, metaOf(entry))
-    if valid then return valid end
-    Log.warn("Value %s for '%s' rejected: %s; variable reset to the inverter's value %s",
-      localText, name, reason, remoteText)
-    showSetting(entry, remoteText)
-  elseif action == "conflict" then
-    Log.warn("'%s' was changed locally (%s) and on the inverter (%s); the inverter's value applies",
-      name, localText, remoteText)
-    references[name] = remoteText
-    showSetting(entry, remoteText)
-  elseif action == "adopt" then
-    if references[name] ~= nil then
-      Log.info("'%s' was changed on the inverter: %s -> %s", name, references[name], remoteText)
-    end
-    references[name] = remoteText
-    showSetting(entry, remoteText)
-  else
-    App.Display.set(entry, remoteText)
-  end
-  return nil
-end
-
---- Three-way synchronisation of the listed settings, and refresh of read-only
--- settings and device information.
+--- Read the listed settings and device information from the inverter. A
+-- setting changed on the inverter (web UI, app) is adopted.
 function App.syncSettings()
   if state.stopped or not state.meta then return end
-  if state.syncing then
-    state.syncAgain = true
-    return
-  end
-  state.syncing = true
   Timer.after("settings", SETTINGS_SYNC_MS, App.syncSettings)
   state.existingIds = App.Children.existingIds()
 
@@ -371,61 +309,97 @@ function App.syncSettings()
   local all = {}
   for _, entry in ipairs(writeEntries) do all[#all + 1] = entry end
   for _, entry in ipairs(readEntries) do all[#all + 1] = entry end
-  if #all == 0 then return finishSync() end
+  if #all == 0 then return end
 
   state.client:settings(settingsQuery(all), function(err, remote, kind)
     if err then
       -- While the inverter is offline, polling already reports it.
       if state.online == false then
-        Log.debug("Settings synchronisation failed: %s", err)
+        Log.debug("Reading settings failed: %s", err)
       else
-        Log.warn("Settings synchronisation failed: %s", err)
+        Log.warn("Reading settings failed: %s", err)
       end
       if kind == "auth" then stop(err) end
-      return finishSync()
+      return
     end
-    local references = App.Sync.references()
-    local writes, pending = {}, {}
     for _, entry in ipairs(writeEntries) do
-      local value = reconcile(entry, remote, references)
-      if value then
-        writes[entry.module] = writes[entry.module] or {}
-        writes[entry.module][entry.id] = value
-        pending[entry.name] = value
+      local text   = App.Sync.normalize(entry, remoteValue(remote, entry))
+      local before = state.known[entry.name]
+      if before ~= nil and text ~= before then
+        Log.info("'%s' was changed on the inverter: %s -> %s", entry.name, before, text)
       end
+      state.known[entry.name] = text
+      showSetting(entry, text)
     end
     for _, entry in ipairs(readEntries) do
-      local value = App.Catalog.present(entry, remoteValue(remote, entry))
-      App.Vars.publish(entry, value)
-      App.Display.set(entry, value)
-    end
-    App.Sync.saveReferences(references)
-    if next(writes) == nil then return finishSync() end
-
-    state.client:writeSettings(writes, function(werr, wkind)
-      if werr then
-        Log.error("Writing settings failed: %s; variables reset to the inverter's values", werr)
-        for name in pairs(pending) do
-          local entry = App.Catalog.get(name)
-          showSetting(entry, App.Sync.normalize(entry, remoteValue(remote, entry)))
-        end
-        if wkind == "auth" then stop(werr) end
-        return finishSync()
+      if not state.writeSet[entry.name] then
+        local value = App.Catalog.present(entry, remoteValue(remote, entry))
+        App.Values.set(entry, value)
+        App.Display.set(entry, value)
       end
-      verifyWrites(pending, 1)
-    end)
+    end
+    App.Values.flush()
+    App.Display.render()
   end)
 end
 
--- Actions ----------------------------------------------------------------------
+-- The inverter applies a written value with a short delay, so the read-back
+-- is repeated a few times before a difference counts as rejected.
+local function verify(entry, wanted, attempt)
+  state.client:settings(settingsQuery({ entry }), function(err, remote, kind)
+    if err then
+      Log.error("Cannot read back '%s': %s", entry.name, err)
+      if kind == "auth" then stop(err) end
+      return
+    end
+    local actual = App.Sync.normalize(entry, remoteValue(remote, entry))
+    if actual ~= wanted and attempt < VERIFY_ATTEMPTS then
+      local again = function() verify(entry, wanted, attempt + 1) end
+      return Timer.after("verify." .. entry.name, VERIFY_DELAY_MS, again)
+    end
+    if actual == wanted then
+      Log.info("Setting '%s' changed to %s on the inverter", entry.name, wanted)
+    else
+      Log.error("The inverter kept '%s' at %s instead of %s", entry.name, actual, wanted)
+    end
+    state.known[entry.name] = actual
+    showSetting(entry, actual)
+    App.Values.flush()
+    App.Display.render()
+  end)
+end
 
---- fibaro.call(id, "set", name, value): change a setting listed in writeValues.
+-- Actions ------------------------------------------------------------------------
+
+--- Write a setting listed in writeValues: fibaro.call(id, "set", name, value),
+-- or a switch or slider in the user interface.
 function App.set(name, value)
-  if not (state.writeSet and state.writeSet[name]) then
+  local entry = App.Catalog.get(tostring(name))
+  if not (entry and state.writeSet and state.writeSet[entry.name]) then
     return Log.warn("set: '%s' is not listed in writeValues", tostring(name))
   end
-  App.Vars.set(name, tostring(value))
-  App.syncSettings()
+  if not state.meta then
+    return Log.warn("set: not connected to the inverter yet; '%s' was not changed", entry.name)
+  end
+  local valid, reason = App.Sync.validate(entry, value, metaOf(entry))
+  if not valid then
+    Log.warn("set: value %s for '%s' rejected: %s", tostring(value), entry.name, reason)
+    -- Put a moved slider or flipped switch back to the inverter's value.
+    showSetting(entry, state.known[entry.name])
+    return App.Display.render()
+  end
+  if valid == state.known[entry.name] then
+    return Log.debug("set: '%s' is already %s", entry.name, valid)
+  end
+  state.client:writeSettings({ [entry.module] = { [entry.id] = valid } }, function(err, kind)
+    if err then
+      Log.error("Writing '%s' failed: %s", entry.name, err)
+      if kind == "auth" then stop(err) end
+      showSetting(entry, state.known[entry.name])
+      return App.Display.render()
+    end
+    verify(entry, valid, 1)
+  end)
 end
 
 --- Handler for the Refresh button.
