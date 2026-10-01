@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README: how-to with table of contents near the top, and a scene example
   for reading and writing values.
 
+### Fixed
+
+- Saving the code in the HC3 editor left the user interface without status
+  line, refresh button or values: the editor rebuilds the layout from its own
+  copy (viewLayout), which was not updated. The QuickApp now writes both and
+  rebuilds the complete layout whenever it differs.
+
 ### Upgrade notes
 
 - On the first start, the QuickApp removes the variables of 1.0.0 that it no

@@ -359,41 +359,69 @@ local function rowNames(rows)
 end
 
 test("the layout has one row per value, a switch beside its name and a slider row below", function()
-  local base = { row("lblStatus"), row("btnRefresh") }
   local spec = { { name = "pvPower" }, { name = "batterySmartControl", control = { type = "switch" } },
                  { name = "batteryMinSoc", control = SLIDER } }
-  local rows = Display.layout(base, spec)
+  local rows = Display.layout(spec)
   eq(rowNames(rows), { "lblStatus", "lblName1", "lblName2", "lblName3", "sldValue3", "btnRefresh" })
   eq(rows[3].components[2].type, "switch")
   eq({ rows[5].components[1].min, rows[5].components[1].max }, { "5", "100" })
-  eq(Display.layout(rows, spec), nil, "unchanged table: no new layout, no restart")
-  eq(rowNames(Display.layout(rows, { { name = "pvPower" } })), { "lblStatus", "lblName1", "btnRefresh" })
-  local callbacks = Display.callbacks({ { name = "btnRefresh", eventType = "onReleased", callback = "x" },
-                                        { name = "sldValue9", eventType = "onChanged", callback = "y" } }, spec)
-  eq(callbacks, {
-    { name = "btnRefresh", eventType = "onReleased", callback = "x" },
+  eq(rows[6].components[1].eventBinding.onReleased[1].params.args, { "onReleased", "btnRefresh" })
+  eq(Display.callbacks(spec), {
+    { name = "btnRefresh", eventType = "onReleased", callback = "uibtnRefreshOnReleased" },
     { name = "swValue2",   eventType = "onToggled",  callback = "uiswValue2OnToggled" },
     { name = "sldValue3",  eventType = "onChanged",  callback = "uisldValue3OnChanged" },
   })
 end)
 
-test("a rejected layout is reported and the QuickApp keeps running", function()
+test("the editor's copy of the layout has the same elements without event bindings", function()
   local qa = FakeQA.new({})
   qa.id = 100
+  local rows = Display.layout({ { name = "batteryMinSoc", control = SLIDER } })
+  local items = Display.viewLayout(qa, rows)["$jason"].body.sections.items
+  eq(Display.signature(items), Display.signature(rows))
+  eq(items[#items].components[1].eventBinding, nil)
+  ok(rows[#rows].components[1].eventBinding, "the UI itself keeps its bindings")
+end)
+
+test("spacers and row types of the editor do not count as a layout change", function()
+  local editor = { { type = "vertical", components = { { name = "lblStatus", type = "label" }, { type = "space" } } } }
+  eq(Display.signature(editor), Display.signature({ row("lblStatus") }))
+end)
+
+local function device(uiView, viewLayout)
+  return { properties = { uiView = uiView, viewLayout = viewLayout } }
+end
+
+test("a layout the editor broke is rebuilt completely, and only once", function()
+  local qa = FakeQA.new({})
+  qa.id = 100
+  local spec = { { name = "pvPower" } }
   local savedGet, savedPut = api.get, api.put
-  api.get = function() return { properties = { uiView = { row("lblStatus"), row("btnRefresh") } } }, 200 end
-  api.put = function() return nil, 500 end
-  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), false, "no restart is expected")
-  ok(logText():find("Cannot save the value table layout (HTTP 500)", 1, true), logText())
-  api.put = function() return {}, 200 end
-  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), true)
+  local stored = device({ row("lblName1", "lblValue1") }, {})
+  local puts = 0
+  api.get = function() return stored, 200 end
+  api.put = function(_, body) puts = puts + 1; stored = body; return {}, 200 end
+  eq(Display.ensureLayout(qa, spec), true, "status line and refresh button were missing")
+  eq(rowNames(stored.properties.uiView), { "lblStatus", "lblName1", "btnRefresh" })
+  eq(Display.ensureLayout(qa, spec), false, "complete layout: no further restart")
+  stored.properties.viewLayout = {}
+  eq(Display.ensureLayout(qa, spec), true, "a stale editor copy is rewritten as well")
+  eq(puts, 2)
   api.get, api.put = savedGet, savedPut
 end)
 
-test("rows of earlier layouts are replaced", function()
-  local oneLabel = { row("lblStatus"), row("lblValue1"), row("lblValue2"), row("btnRefresh") }
-  eq(rowNames(Display.layout(oneLabel, { { name = "pvPower" }, { name = "homePower" } })),
-    { "lblStatus", "lblName1", "lblName2", "btnRefresh" })
+test("a rejected or discarded layout is reported and does not restart the QuickApp", function()
+  local qa = FakeQA.new({})
+  qa.id = 100
+  local savedGet, savedPut = api.get, api.put
+  api.get = function() return device({ row("lblStatus"), row("btnRefresh") }), 200 end
+  api.put = function() return nil, 500 end
+  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), false)
+  ok(logText():find("Cannot save the user interface layout (HTTP 500)", 1, true), logText())
+  api.put = function() return {}, 200 end
+  eq(Display.ensureLayout(qa, { { name = "pvPower" } }), false, "the controller kept the old layout")
+  ok(logText():find("did not keep the user interface layout", 1, true), logText())
+  api.get, api.put = savedGet, savedPut
 end)
 
 -- Children ---------------------------------------------------------------------
