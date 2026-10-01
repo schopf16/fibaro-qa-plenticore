@@ -5,8 +5,11 @@
     python tools/scan.py --history   # every commit, message and author (before going public)
 
 Three sources of forbidden content:
-  1. generic patterns below (private IPs, e-mail addresses, credentials),
-  2. the values in your .env files (controller address, user, password),
+  1. generic patterns below (private IPs, e-mail addresses, credentials, and
+     controller device IDs in calls, API paths and log tags - only the
+     placeholder IDs in PLACEHOLDER_IDS may appear there),
+  2. the values in your .env files (controller address, user, password, and
+     HC3_DEV_QA_ID as a whole number),
   3. your private deny lists ../.scan-deny.txt and .scan-deny.txt (git-ignored):
      one literal per line - room names, device names, serial numbers.
 tools/scan-allow.txt lists literals that may appear despite matching a pattern.
@@ -34,9 +37,21 @@ PATTERNS = [
      r"(?i)\b(?:password|passwd|pwd|api_?key|token|secret)\b\s*[:=]\s*[\"'][^\"']{3,}[\"']"),
     ("basic auth header", r"(?i)authorization\s*[:=]\s*[\"']?basic\s+[A-Za-z0-9+/=]{8,}"),
 ]
+# Places where a controller device ID appears; group 1 is the ID.
+DEVICE_ID_PATTERNS = [
+    ("device ID in a fibaro call", r"\b(?:fibaro\.\w+|hub\.call)\(\s*(\d{2,})"),
+    ("device ID in an API path", r"/(?:devices|quickApp|quickApp/export|plugins/restart)/(\d{2,})\b"),
+    ("device ID in a URL parameter", r"(?i)\bdevice_?id=(\d{2,})\b"),
+    ("device ID in a log tag", r"\b[A-Z][A-Z0-9]{2,}_(\d{2,})\b"),
+    ("device ID in text", r"(?i)\b(?:device|quickapp)(?:\s+id|id)?\s*[:=#]?\s*\(?(\d{3,})\b"),
+    ("device ID constant", r"\b\w+\s*=\s*(\d{2,})\s*--.*\bdevice\b"),
+]
+# IDs that examples and tests use instead of real ones.
+PLACEHOLDER_IDS = {"100", "123", "1234"}
+# Addresses GitHub itself writes into commits (merge committer, bot sign-off).
+GITHUB_ADDRESSES = ("noreply@github.com", "support@github.com", "users.noreply.github.com")
 SKIP_DIRS = {".git", "dist", ".venv", "venv", "__pycache__", "node_modules"}
 SKIP_FILES = {".env", ".scan-deny.txt"}
-ENV_SKIP = {"HC3_DEV_QA_ID"}
 
 
 def read_lines(path: Path) -> list[str]:
@@ -47,10 +62,15 @@ def read_lines(path: Path) -> list[str]:
 
 
 def deny_literals() -> list[tuple[str, str]]:
-    """(label, literal) pairs; labels never contain the secret itself."""
+    """(label, literal) pairs; labels never contain the secret itself.
+    Numbers (device IDs) are matched as whole numbers only."""
     denied = []
     for key, value in load_env().items():
-        if key in ENV_SKIP or len(value) < 4:
+        if value.isdigit():
+            if len(value) >= 2:
+                denied.append((f"value of .env {key}", value))
+            continue
+        if len(value) < 4:
             continue
         if key.endswith("_URL"):
             host = urlparse(value).hostname
@@ -66,18 +86,25 @@ def deny_literals() -> list[tuple[str, str]]:
 class Scanner:
     def __init__(self):
         self.allowed = read_lines(ROOT / "tools" / "scan-allow.txt")
-        self.denied = [(label, literal.lower()) for label, literal in deny_literals()]
+        self.denied = [(label, re.compile(rf"(?<![\d.]){re.escape(literal)}(?![\d.])") if literal.isdigit()
+                        else literal.lower()) for label, literal in deny_literals()]
         self.patterns = [(label, re.compile(p)) for label, p in PATTERNS]
+        self.id_patterns = [(label, re.compile(p)) for label, p in DEVICE_ID_PATTERNS]
         self.findings: list[str] = []
 
     def line(self, where: str, text: str) -> None:
         lowered = text.lower()
         for label, literal in self.denied:
-            if literal in lowered:
+            if literal.search(text) if isinstance(literal, re.Pattern) else literal in lowered:
                 self.findings.append(f"{where}: {label}")
         for label, pattern in self.patterns:
             for match in pattern.finditer(text):
-                if not any(a in match.group(0) for a in self.allowed):
+                allowed = (*self.allowed, *GITHUB_ADDRESSES)
+                if not any(a in match.group(0) for a in allowed):
+                    self.findings.append(f"{where}: {label}: {match.group(0)}")
+        for label, pattern in self.id_patterns:
+            for match in pattern.finditer(text):
+                if match.group(1) not in PLACEHOLDER_IDS and match.group(0) not in self.allowed:
                     self.findings.append(f"{where}: {label}: {match.group(0)}")
 
     def text(self, where: str, text: str) -> None:
