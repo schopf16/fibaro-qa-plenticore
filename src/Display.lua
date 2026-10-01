@@ -224,8 +224,10 @@ function Display.format(entry, value)
   return tostring(value)
 end
 
+--- Remember a value for the next render. Text from the inverter is escaped,
+-- because the HC3 renders labels as HTML.
 function Display.set(entry, value)
-  texts[entry.name] = Display.format(entry, value)
+  texts[entry.name] = Util.escapeHtml(Display.format(entry, value))
   raw[entry.name]   = value
 end
 

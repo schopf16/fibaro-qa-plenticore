@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log says so at start.
 - Option `deadband` to write values on every change instead of only on
   changes beyond 10 W, 0.01 kWh or 1 %.
+- Option `https` (default on): encrypted connection to the inverter.
 
 ### Changed
 
@@ -34,12 +35,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line, refresh button or values: the editor rebuilds the layout from its own
   copy (viewLayout), which was not updated. The QuickApp now writes both and
   rebuilds the complete layout whenever it differs.
+- A number outside the 64-bit integer range (`1e20`) or infinity for a
+  setting raised a Lua error; it is now rejected with a clear message (#20).
+- An error while processing a reading stopped polling for good; the next
+  reading is now scheduled first (#20).
+- A drop to zero inside the dead band was never published, so `pvPower`
+  could stay at a few watts overnight (#21).
+- The cleanup of 1.0.0 variables ran on every start and also deleted
+  variables a user had created with a value name; it now runs once, removes
+  only the variables 1.0.0 created, and restarts only if the controller kept
+  the change (#22).
+
+### Security
+
+See advisory GHSA-rj7p-2wjf-cw8x. All points require access to the local
+network.
+
+- The login refuses a challenge with fewer than 10000 key derivation
+  rounds; a device impersonating the inverter could otherwise obtain a proof
+  that allows a fast offline password search.
+- Nonces and the AES-GCM IV came from `math.random`, which the controller
+  does not seed: they repeated after every restart. They now come from a
+  SHA-256 pool seeded at start and mixed with the inverter's random values.
+- The session ID was sent in clear text; the connection now uses HTTPS by
+  default.
+- Text received from the inverter is escaped before it is shown in the user
+  interface.
 
 ### Upgrade notes
 
 - On the first start, the QuickApp removes the variables of 1.0.0 that it no
-  longer uses (one per value, `pollIntervalSec`, `logLevel`, `language`) and
-  restarts once. `host`, `password` and the three lists are kept.
+  longer uses (one per value listed in `readValues` and `writeValues`,
+  `pollIntervalSec`, `logLevel`, `language`) and restarts once. `host`,
+  `password`, the three lists and all other variables are kept.
+- The connection uses HTTPS. If an inverter does not offer it, set
+  `https = false` in `App.OPTIONS`.
 - Scenes that read single variables such as `batterySoc` must read the
   variable `values` instead (see README, "Reading values").
 - A changed poll interval, log level or language must be set again in
