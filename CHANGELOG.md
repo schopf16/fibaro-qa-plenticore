@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New defaults for `readValues`, `writeValues` and `childValues`.
 - Changing a setting in a QuickApp variable is replaced by the user
   interface controls and the `set` action.
-- README: how-to with table of contents near the top.
+- README: how-to with table of contents near the top, and a scene example
+  for reading and writing values.
 
 ### Upgrade notes
 
