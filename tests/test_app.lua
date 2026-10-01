@@ -148,7 +148,8 @@ test("a challenge with too few key derivation rounds is refused before any proof
     inverter.transport = function(method, url, headers, body, callback)
       if url:find("auth/start", 1, true) then
         inverter.calls[#inverter.calls + 1] = method .. " auth/start"
-        return callback(200, json.encode({ nonce = V.serverNonce, salt = V.salt, rounds = rounds, transactionId = "t" }))
+        local start = { nonce = V.serverNonce, salt = V.salt, rounds = rounds, transactionId = "t" }
+        return callback(200, json.encode(start))
       end
       return transport(method, url, headers, body, callback)
     end
