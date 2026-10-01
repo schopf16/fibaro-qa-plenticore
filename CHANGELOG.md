@@ -60,7 +60,8 @@ network.
 - The session ID was sent in clear text; the connection now uses HTTPS by
   default.
 - Text received from the inverter is escaped before it is shown in the user
-  interface.
+  interface (the web interface shows it literally; escaping protects other
+  clients that might render HTML).
 
 ### Upgrade notes
 

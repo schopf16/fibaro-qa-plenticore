@@ -61,16 +61,22 @@ end
 
 --- Migration from 1.0.0, run once: remove the single-value variables that
 -- 1.0.0 created (one per name in readValues and writeValues) and the options
--- that moved into the code. Other variables, also those a user created, are
--- kept. Saving the variable list restarts the QuickApp; returns true if it was
--- saved and the controller kept the change.
+-- that moved into the code. Only a QuickApp that has these options (1.0.0
+-- always created them) is migrated; other variables, also those a user
+-- created, are kept. Saving the variable list restarts the QuickApp; returns
+-- true if it was saved and the controller kept the change.
 function Values.removeObsolete(lists)
   local done = App.Store.get(MIGRATION)
   if done.variables then return false end
-  App.Store.set(MIGRATION, { variables = true })
-
   local list = variableList(qa.id)
-  if not list then return false end
+  if not list then return false end -- tried again at the next start
+  App.Store.set(MIGRATION, { variables = true })
+  local fromVersion1 = false
+  for _, variable in ipairs(list) do
+    if OBSOLETE[variable.name] then fromVersion1 = true end
+  end
+  if not fromVersion1 then return false end
+
   local created = {}
   for _, names in ipairs({ lists.read, lists.write }) do
     for _, name in ipairs(names) do created[name] = true end

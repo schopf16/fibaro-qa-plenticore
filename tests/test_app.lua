@@ -676,12 +676,38 @@ test("the migration removes only variables of 1.0.0, keeps the password, and run
   eq(puts(), 1)
 end)
 
+test("a new installation is not migrated, also not a variable the user created before the first start", function()
+  controller()
+  STORAGE = {}
+  local puts = variablesOn({ { name = "host", type = "string", value = "192.0.2.5" },
+                             { name = "pvPower", type = "string", value = "created by the user" } })
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), false)
+  eq(puts(), 0)
+end)
+
+test("a migration without access to the variable list is tried again at the next start", function()
+  controller()
+  STORAGE = {}
+  local qa = restart()
+  local version1 = { { name = "pvPower", type = "string", value = "1000" },
+                     { name = "language", type = "string", value = "auto" } }
+  variablesOn(version1)
+  api.get = function() return nil, 500 end
+  App.Values.init(qa, true)
+  eq(App.Values.removeObsolete(LISTS_100), false)
+  variablesOn(version1)
+  App.Values.init(restart(), true)
+  eq(App.Values.removeObsolete(LISTS_100), true, "removed at the next start")
+end)
+
 test("a migration the controller does not keep is reported and does not restart", function()
   controller()
   STORAGE = {}
   local qa = restart()
   variablesOn({ { name = "host", type = "string", value = "192.0.2.5" },
-                { name = "pvPower", type = "string", value = "1000" } })
+                { name = "pvPower", type = "string", value = "1000" },
+                { name = "logLevel", type = "string", value = "info" } })
   api.put = function() return {}, 200 end
   App.Values.init(qa, true)
   eq(App.Values.removeObsolete(LISTS_100), false)

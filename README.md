@@ -32,6 +32,13 @@ from the user interface, scenes and other QuickApps.
 2. In the HC3 web interface: **Settings → Devices → Add device → Other device →
    Upload file**, and select the `.fqa`.
 
+**Upgrading from 1.0.0:** import the new `.fqa` as a new QuickApp, or copy
+the new files into the existing one: first delete the file `Vars`, then
+replace the others. On its first start the QuickApp removes the variables of
+1.0.0 it no longer uses and keeps `host`, `password` and the three lists.
+Scenes that read single variables must read `values` instead
+([Reading values](#reading-values)).
+
 ### Step 2: Fill in the variables
 
 Open the new QuickApp and go to **Variables**. Saving the variables restarts
