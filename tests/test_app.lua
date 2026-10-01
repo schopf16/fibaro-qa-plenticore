@@ -388,7 +388,7 @@ test("spacers and row types of the editor do not count as a layout change", func
   eq(Display.signature(editor), Display.signature({ row("lblStatus") }))
 end)
 
-local function device(uiView, viewLayout)
+local function deviceWith(uiView, viewLayout)
   return { properties = { uiView = uiView, viewLayout = viewLayout } }
 end
 
@@ -397,7 +397,7 @@ test("a layout the editor broke is rebuilt completely, and only once", function(
   qa.id = 100
   local spec = { { name = "pvPower" } }
   local savedGet, savedPut = api.get, api.put
-  local stored = device({ row("lblName1", "lblValue1") }, {})
+  local stored = deviceWith({ row("lblName1", "lblValue1") }, {})
   local puts = 0
   api.get = function() return stored, 200 end
   api.put = function(_, body) puts = puts + 1; stored = body; return {}, 200 end
@@ -414,7 +414,7 @@ test("a rejected or discarded layout is reported and does not restart the QuickA
   local qa = FakeQA.new({})
   qa.id = 100
   local savedGet, savedPut = api.get, api.put
-  api.get = function() return device({ row("lblStatus"), row("btnRefresh") }), 200 end
+  api.get = function() return deviceWith({ row("lblStatus"), row("btnRefresh") }), 200 end
   api.put = function() return nil, 500 end
   eq(Display.ensureLayout(qa, { { name = "pvPower" } }), false)
   ok(logText():find("Cannot save the user interface layout (HTTP 500)", 1, true), logText())
