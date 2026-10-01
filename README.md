@@ -17,7 +17,8 @@ from the user interface, scenes and other QuickApps.
   - [Step 4: Check](#step-4-check)
 - [Features](#features) · [Requirements](#requirements)
 - [User interface](#user-interface) · [Reading values](#reading-values) ·
-  [Writing values](#writing-values) · [Child devices](#child-devices)
+  [Writing values](#writing-values) · [Scene example](#scene-example) ·
+  [Child devices](#child-devices)
 - [Value reference](#value-reference): [measured values](#measured-values) ·
   [settings](#settings) · [device information](#device-information) ·
   [time control](#time-control)
@@ -140,7 +141,7 @@ in the QuickApp variable `values`, as JSON:
 Scenes and other QuickApps read it through the QuickApp's device ID:
 
 ```lua
-local PLENTICORE = 1054   -- device ID of this QuickApp
+local PLENTICORE = 123   -- device ID of this QuickApp
 
 local function plenticore()
   for _, variable in ipairs(fibaro.getValue(PLENTICORE, "quickAppVariables") or {}) do
@@ -157,7 +158,7 @@ if soc and soc < 20 then fibaro.debug("scene", "Battery low: " .. soc .. " %") e
 ```
 
 Outside the HC3, the same data is available from the HC3 REST API:
-`GET /api/devices/1054`, property `quickAppVariables`.
+`GET /api/devices/123`, property `quickAppVariables`.
 
 Numbers and on/off settings (`0`/`1`) are JSON numbers; states, names and time
 control are text. To keep the controller's database quiet, the variable is
@@ -173,10 +174,10 @@ Settings listed in `writeValues` can be changed in three ways:
 - from scenes and other QuickApps with the `set` action:
 
   ```lua
-  fibaro.call(1054, "set", "batteryMinSoc", 30)
+  fibaro.call(123, "set", "batteryMinSoc", 30)
   ```
 
-- from outside the HC3: `POST /api/devices/1054/action/set` with the body
+- from outside the HC3: `POST /api/devices/123/action/set` with the body
   `{"args": ["batteryMinSoc", 30]}`.
 
 Every value is checked against the range the inverter reports before it is
@@ -186,6 +187,45 @@ returns to the inverter's value.
 Settings are read from the inverter every 5 minutes and after every change.
 A setting changed on the inverter (web interface, app) is taken over and
 logged.
+
+## Scene example
+
+A complete Lua scene that reads the current PV power and today's yield, and
+sets the minimum battery state of charge to 10 %. Replace `123` with the
+device ID of the QuickApp (shown in its **General** tab). `pvPower` and
+`yieldDay` must be listed in `readValues`, `batteryMinSoc` in `writeValues` -
+all three are in the defaults.
+
+```lua
+local PLENTICORE = 123   -- device ID of the KOSTAL PLENTICORE QuickApp
+
+-- All values of the QuickApp as a table, e.g. values.pvPower.
+local function plenticoreValues()
+  for _, variable in ipairs(fibaro.getValue(PLENTICORE, "quickAppVariables") or {}) do
+    if variable.name == "values" then
+      local ok, values = pcall(json.decode, variable.value)
+      if ok and type(values) == "table" then return values end
+    end
+  end
+  return {}
+end
+
+-- Read: current PV power in W and today's PV yield in kWh.
+local values = plenticoreValues()
+fibaro.debug("scene", "PV power: " .. tostring(values.pvPower) .. " W, "
+  .. "yield today: " .. tostring(values.yieldDay) .. " kWh")
+
+-- Write: minimum battery state of charge to 10 %.
+fibaro.call(PLENTICORE, "set", "batteryMinSoc", 10)
+```
+
+The scene log shows, for example, `PV power: 1597 W, yield today: 6.12 kWh`,
+and the QuickApp's log `Setting 'batteryMinSoc' changed to 10 on the inverter`.
+A value is `nil` if its name is not listed in `readValues` or `writeValues`, or
+before the first reading after a restart.
+
+Note: `batterySoc` is the battery's actual state of charge and can only be
+read; the setting that can be changed is the minimum, `batteryMinSoc`.
 
 ## Child devices
 
@@ -318,7 +358,7 @@ internet.
 
 All log lines of this QuickApp carry the tag **`PLENTICORE`** - filter the HC3
 console by it. If the QuickApp is installed more than once, each instance
-appends its device ID, e.g. `PLENTICORE_1054`.
+appends its device ID, e.g. `PLENTICORE_123`.
 
 1. Set `logLevel = "debug"` in the [options](#step-3-options-optional) and save
    (this restarts the QuickApp).
